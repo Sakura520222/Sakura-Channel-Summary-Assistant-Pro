@@ -33,8 +33,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
     RESTART_FLAG_FILE, SHUTDOWN_FLAG_FILE, SESSION_PATH,
-    logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST
+    logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST,
+    BLACKLIST_ENABLED, BLACKLIST_THRESHOLD_COUNT, BLACKLIST_THRESHOLD_HOURS
 )
+from database import get_db_manager
 from scheduler import main_job
 from command_handlers import (
     handle_manual_summary, handle_show_prompt, handle_set_prompt,
@@ -45,7 +47,9 @@ from command_handlers import (
     handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
     handle_changelog, handle_shutdown, handle_pause, handle_resume,
     handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
-    handle_start, handle_help, handle_clear_cache, handle_clean_logs
+    handle_start, handle_help, handle_clear_cache, handle_clean_logs,
+    handle_blacklist, handle_add_blacklist, handle_remove_blacklist,
+    handle_clear_blacklist, handle_confirm_clear_blacklist, handle_blacklist_stats
 )
 from history_handlers import handle_history, handle_export, handle_stats
 from poll_regeneration_handlers import handle_poll_regeneration_callback
@@ -231,6 +235,16 @@ async def main():
         client.add_event_handler(handle_history, NewMessage(pattern='/history|/历史'))
         client.add_event_handler(handle_export, NewMessage(pattern='/export|/导出'))
         client.add_event_handler(handle_stats, NewMessage(pattern='/stats|/统计'))
+
+        # 10. 黑名单管理命令 (新增)
+        if BLACKLIST_ENABLED:
+            client.add_event_handler(handle_blacklist, NewMessage(pattern='/blacklist|/黑名单'))
+            client.add_event_handler(handle_add_blacklist, NewMessage(pattern='/addblacklist|/add_blacklist|/添加黑名单'))
+            client.add_event_handler(handle_remove_blacklist, NewMessage(pattern='/removeblacklist|/remove_blacklist|/移除黑名单'))
+            client.add_event_handler(handle_clear_blacklist, NewMessage(pattern='/clearblacklist|/clear_blacklist|/清空黑名单'))
+            client.add_event_handler(handle_confirm_clear_blacklist, NewMessage(pattern='/confirmclear'))
+            client.add_event_handler(handle_blacklist_stats, NewMessage(pattern='/blackliststats|/blacklist_stats|/黑名单统计'))
+            logger.info("黑名单管理命令处理器已注册")
         # 只处理非命令消息作为提示词输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_poll_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
@@ -251,6 +265,12 @@ async def main():
         
         # 获取机器人自己的ID（缓存，避免每次事件都调用get_me）
         bot_id = None
+        
+        # 恶意行为追踪（仅在启用黑名单功能时使用）
+        violation_tracking = {} if BLACKLIST_ENABLED else {}
+        
+        # 获取数据库管理器实例
+        db_manager = get_db_manager() if BLACKLIST_ENABLED else None
         
         async def handle_auto_leave(event):
             """处理机器人被添加到群组/频道的自动退出逻辑"""
@@ -341,9 +361,17 @@ async def main():
                     if hasattr(chat_entity, 'title'):
                         chat_info = f"\"{chat_entity.title}\" "
                     
-                    # 使用 event.is_channel 属性来判断类型
-                    # 这是 Telethon 提供的最可靠的方法
-                    chat_type = "频道" if event.is_channel else "群组"
+                    # 使用 broadcast 和 megagroup 属性精确判断类型
+                    # Channel类型可以表示频道或超级群组
+                    if hasattr(chat_entity, 'broadcast') and chat_entity.broadcast:
+                        # broadcast=True 表示这是频道
+                        chat_type = "频道"
+                    elif hasattr(chat_entity, 'megagroup') and chat_entity.megagroup:
+                        # megagroup=True 表示这是超级群组
+                        chat_type = "群组"
+                    else:
+                        # 降级到 event.is_channel
+                        chat_type = "频道" if event.is_channel else "群组"
                         
                     logger.debug(f"实体类型判断: chat_type={chat_type}, event.is_channel={event.is_channel}, broadcast={getattr(chat_entity, 'broadcast', None)}, megagroup={getattr(chat_entity, 'megagroup', None)}")
                         
@@ -356,6 +384,143 @@ async def main():
                 
                 # 立即记录 chat_type 用于调试
                 logger.debug(f"[DEBUG] chat_type 最终值: {chat_type}, event.is_channel: {event.is_channel}")
+                
+                # ==================== 黑名单检查和处理 ====================
+                if BLACKLIST_ENABLED and db_manager:
+                    # 检查用户是否已在黑名单中
+                    is_blacklisted = db_manager.is_user_blacklisted(inviter_id)
+                    
+                    if is_blacklisted:
+                        logger.warning(f"用户 {inviter_id} 在黑名单中，直接拒绝并退出")
+                        
+                        # 发送提示消息
+                        try:
+                            await client.send_message(
+                                chat_id,
+                                "⛔ 您已被加入黑名单，无法使用此机器人。",
+                                link_preview=False
+                            )
+                        except Exception:
+                            pass
+                        
+                        # 直接退出
+                        try:
+                            if chat_type == "频道":
+                                await client(LeaveChannelRequest(channel=chat_id))
+                            else:
+                                await client.delete_dialog(chat_id)
+                            logger.warning(f"已从 {chat_type} {chat_info}退出（黑名单用户）")
+                        except Exception as e:
+                            logger.error(f"退出失败: {type(e).__name__}: {e}")
+                        return
+                    
+                    # 记录违规行为
+                    if inviter_id not in violation_tracking:
+                        violation_tracking[inviter_id] = {
+                            'count': 1,
+                            'first_time': current_time,
+                            'last_time': current_time,
+                            'chat_ids': [chat_id]
+                        }
+                        logger.info(f"记录首次违规: 用户 {inviter_id}")
+                    else:
+                        # 检查是否在时间窗口内
+                        tracking_data = violation_tracking[inviter_id]
+                        time_diff_hours = (current_time - tracking_data['first_time']) / 3600
+                        
+                        if time_diff_hours < BLACKLIST_THRESHOLD_HOURS:
+                            # 在时间窗口内，增加计数
+                            tracking_data['count'] += 1
+                            tracking_data['last_time'] = current_time
+                            tracking_data['chat_ids'].append(chat_id)
+                            
+                            logger.warning(f"检测到重复违规: 用户 {inviter_id}, 次数: {tracking_data['count']}")
+                            
+                            # 检查是否达到阈值
+                            if tracking_data['count'] >= BLACKLIST_THRESHOLD_COUNT:
+                                # 自动加入黑名单
+                                username = None
+                                display_name = None
+                                
+                                try:
+                                    # 使用 get_entity 获取用户信息
+                                    user = await client.get_entity(inviter_id)
+                                    
+                                    # 检查是否是bot（确保不是bot自己）
+                                    if hasattr(user, 'bot') and user.bot:
+                                        # 这是一个bot，不记录username
+                                        logger.warning(f"邀请者 {inviter_id} 是一个bot，跳过获取用户名")
+                                        display_name = "Bot用户"
+                                    else:
+                                        # 这是一个真实用户
+                                        # 优先获取username
+                                        username = getattr(user, 'username', None)
+                                        first_name = getattr(user, 'first_name', None)
+                                        last_name = getattr(user, 'last_name', None)
+                                        
+                                        if username:
+                                            display_name = username
+                                            logger.info(f"成功获取用户名: @{username} (用户ID: {inviter_id})")
+                                        else:
+                                            display_name = f"{first_name or ''} {last_name or ''}".strip() or "未知"
+                                            logger.info(f"获取用户姓名: {display_name} (用户ID: {inviter_id})")
+                                            
+                                except Exception as e:
+                                    logger.debug(f"获取用户 {inviter_id} 信息失败: {e} (可能由于Telegram隐私保护，机器人未与该用户互动)")
+                                    display_name = "无法获取 (Telegram隐私保护)"
+                                
+                                # 添加到黑名单
+                                db_manager.add_to_blacklist(
+                                    user_id=inviter_id,
+                                    username=username,
+                                    reason=f"在 {BLACKLIST_THRESHOLD_HOURS} 小时内违规拉入机器人 {tracking_data['count']} 次",
+                                    added_by="系统自动检测"
+                                )
+                                
+                                # 向所有管理员发送警报
+                                alert_message = f"""🚨 **黑名单警报**
+
+用户已被自动加入黑名单！
+
+👤 **用户信息**：
+• 用户ID: `{inviter_id}`
+• 用户名: {username or '未知'}
+
+⚠️ **违规详情**：
+• 违规次数: {tracking_data['count']} 次
+• 时间窗口: {BLACKLIST_THRESHOLD_HOURS} 小时
+• 首次违规: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(tracking_data['first_time']))}
+• 最后违规: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(tracking_data['last_time']))}
+
+📋 **拉入的群组/频道**：
+• {', '.join([f"ID: {cid}" for cid in tracking_data['chat_ids']])}
+
+❌ **原因**：短时间内多次非授权拉入机器人
+
+如需移除黑名单，请使用 /removeblacklist 命令。"""
+                                
+                                for admin_id in ADMIN_LIST:
+                                    try:
+                                        await client.send_message(
+                                            admin_id,
+                                            alert_message,
+                                            parse_mode='md',
+                                            link_preview=False
+                                        )
+                                        logger.info(f"已向管理员 {admin_id} 发送黑名单警报")
+                                    except Exception as e:
+                                        logger.error(f"向管理员 {admin_id} 发送警报失败: {e}")
+                            else:
+                                logger.info(f"违规次数未达到阈值: 用户 {inviter_id}, 当前: {tracking_data['count']}/{BLACKLIST_THRESHOLD_COUNT}")
+                        else:
+                            # 超过时间窗口，重置计数
+                            violation_tracking[inviter_id] = {
+                                'count': 1,
+                                'first_time': current_time,
+                                'last_time': current_time,
+                                'chat_ids': [chat_id]
+                            }
+                            logger.info(f"重置违规计数: 用户 {inviter_id}（超过时间窗口）")
                 
                 # 验证管理员权限
                 if inviter_id not in ADMIN_LIST:
@@ -395,7 +560,8 @@ async def main():
                         logger.warning(f"✅ 已自动从 {chat_type} {chat_info}(ID: {chat_id}) 退出，邀请者: {inviter_id}")
                         
                     except Exception as e:
-                        logger.error(f"退出 {chat_type} {chat_info}失败: {type(e).__name__}: {e}")
+                        # 静默处理退出失败（如频道已是私有、机器人已被禁止访问等）
+                        logger.debug(f"退出 {chat_type} {chat_info}失败（静默处理）: {type(e).__name__}: {e}")
                 else:
                     logger.info(f"✅ 管理员 {inviter_id} 将机器人添加到 {chat_type} {chat_info}(ID: {chat_id})")
                     
@@ -457,6 +623,18 @@ async def main():
             BotCommand(command="export", description="导出历史记录"),
             BotCommand(command="stats", description="查看统计数据")
         ]
+        
+        # 添加黑名单命令（如果启用）
+        if BLACKLIST_ENABLED:
+            blacklist_commands = [
+                BotCommand(command="blacklist", description="查看黑名单列表"),
+                BotCommand(command="addblacklist", description="添加用户到黑名单"),
+                BotCommand(command="removeblacklist", description="从黑名单移除用户"),
+                BotCommand(command="clearblacklist", description="清空黑名单"),
+                BotCommand(command="blackliststats", description="查看黑名单统计")
+            ]
+            commands.extend(blacklist_commands)
+            logger.info("黑名单命令已注册到命令列表")
         
         await client(SetBotCommandsRequest(
             scope=BotCommandScopeDefault(),

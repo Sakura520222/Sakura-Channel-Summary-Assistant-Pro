@@ -1490,6 +1490,15 @@ async def handle_help(event):
 • /cleanlogs - 清理30天前的日志
 • /cleanlogs 60 - 清理60天前的日志
 
+**🚫 黑名单管理** (新功能)
+/blacklist - 查看黑名单列表
+/addblacklist - 添加用户到黑名单
+• 格式：/addblacklist <用户ID> [原因]
+/removeblacklist - 从黑名单移除用户
+• 格式：/removeblacklist <用户ID>
+/clearblacklist - 清空黑名单
+/blackliststats - 查看黑名单统计信息
+
 **📜 历史记录** (新功能)
 /history - 查看历史总结
 • /history - 查看所有频道最近10条
@@ -1596,3 +1605,317 @@ async def handle_clean_logs(event):
     except Exception as e:
         logger.error(f"清理日志时出错: {type(e).__name__}: {e}", exc_info=True)
         await event.reply(f"清理日志时出错: {e}")
+
+
+# ==================== 黑名单管理命令 ====================
+
+async def handle_blacklist(event):
+    """处理/blacklist命令，查看黑名单列表"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。\n请在 .env 文件中设置 BLACKLIST_ENABLED=true")
+            return
+        
+        # 获取黑名单列表
+        db_manager = get_db_manager()
+        blacklist = db_manager.get_blacklist(limit=50)
+        
+        if not blacklist:
+            await event.reply("📋 黑名单列表\n\n当前黑名单为空")
+            return
+        
+        # 构建黑名单消息
+        blacklist_msg = "📋 **黑名单列表**\n\n"
+        for i, record in enumerate(blacklist, 1):
+            user_id = record['user_id']
+            username = record.get('username', '未知')
+            added_at = record.get('added_at', '未知')
+            reason = record.get('reason', '未指定')
+            violation_count = record.get('violation_count', 1)
+            
+            blacklist_msg += f"{i}. 用户ID: `{user_id}`\n"
+            blacklist_msg += f"   用户名: {username}\n"
+            blacklist_msg += f"   违规次数: {violation_count}\n"
+            blacklist_msg += f"   加入时间: {added_at}\n"
+            blacklist_msg += f"   原因: {reason}\n\n"
+        
+        # 获取统计信息
+        stats = db_manager.get_blacklist_stats()
+        blacklist_msg += f"---\n"
+        blacklist_msg += f"📊 统计信息\n"
+        blacklist_msg += f"• 活跃黑名单: {stats['active_count']} 人\n"
+        blacklist_msg += f"• 总记录数: {stats['total_count']} 条\n"
+        blacklist_msg += f"• 本周新增: {stats['week_new']} 人\n\n"
+        blacklist_msg += f"使用 /removeblacklist <用户ID> 从黑名单移除用户"
+        
+        await event.reply(blacklist_msg, parse_mode='md', link_preview=False)
+        logger.info(f"已向管理员 {sender_id} 发送黑名单列表")
+        
+    except Exception as e:
+        logger.error(f"查看黑名单时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"查看黑名单时出错: {e}")
+
+
+async def handle_add_blacklist(event):
+    """处理/addblacklist命令，手动添加用户到黑名单"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。\n请在 .env 文件中设置 BLACKLIST_ENABLED=true")
+            return
+        
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) < 2:
+            await event.reply(
+                "请提供用户ID。格式：/addblacklist <用户ID> [原因]\n\n"
+                "示例：/addblacklist 123456789 恶意拉入机器人"
+            )
+            return
+        
+        # 解析用户ID
+        try:
+            user_id = int(parts[1])
+        except ValueError:
+            await event.reply(f"无效的用户ID: {parts[1]}")
+            return
+        
+        # 解析原因（可选）
+        reason = ' '.join(parts[2:]) if len(parts) > 2 else "管理员手动添加"
+        
+        # 获取用户信息
+        username = None
+        try:
+            user = await event.client.get_entity(user_id)
+            username = getattr(user, 'username', getattr(user, 'first_name', None))
+        except Exception:
+            pass
+        
+        # 添加到黑名单
+        db_manager = get_db_manager()
+        success = db_manager.add_to_blacklist(
+            user_id=user_id,
+            username=username,
+            reason=reason,
+            added_by=f"管理员 {sender_id}"
+        )
+        
+        if success:
+            success_msg = f"✅ 已成功将用户添加到黑名单\n\n"
+            success_msg += f"👤 用户信息：\n"
+            success_msg += f"• 用户ID: `{user_id}`\n"
+            success_msg += f"• 用户名: {username or '未知'}\n"
+            success_msg += f"• 原因: {reason}\n\n"
+            success_msg += f"使用 /removeblacklist {user_id} 从黑名单移除"
+            
+            await event.reply(success_msg, parse_mode='md', link_preview=False)
+            logger.info(f"管理员 {sender_id} 已将用户 {user_id} 添加到黑名单")
+        else:
+            await event.reply("添加到黑名单失败，请检查日志")
+            
+    except Exception as e:
+        logger.error(f"添加到黑名单时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"添加到黑名单时出错: {e}")
+
+
+async def handle_remove_blacklist(event):
+    """处理/removeblacklist命令，从黑名单移除用户"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。\n请在 .env 文件中设置 BLACKLIST_ENABLED=true")
+            return
+        
+        # 解析命令参数
+        parts = command.split()
+        if len(parts) < 2:
+            await event.reply(
+                "请提供用户ID。格式：/removeblacklist <用户ID>\n\n"
+                "示例：/removeblacklist 123456789"
+            )
+            return
+        
+        # 解析用户ID
+        try:
+            user_id = int(parts[1])
+        except ValueError:
+            await event.reply(f"无效的用户ID: {parts[1]}")
+            return
+        
+        # 从黑名单移除
+        db_manager = get_db_manager()
+        success = db_manager.remove_from_blacklist(user_id)
+        
+        if success:
+            success_msg = f"✅ 已成功将用户从黑名单移除\n\n"
+            success_msg += f"👤 用户信息：\n"
+            success_msg += f"• 用户ID: `{user_id}`\n\n"
+            success_msg += f"注意：用户现在可以正常使用机器人"
+            
+            await event.reply(success_msg, parse_mode='md', link_preview=False)
+            logger.info(f"管理员 {sender_id} 已将用户 {user_id} 从黑名单移除")
+        else:
+            await event.reply(f"用户 {user_id} 不在黑名单中")
+            
+    except Exception as e:
+        logger.error(f"从黑名单移除时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"从黑名单移除时出错: {e}")
+
+
+async def handle_clear_blacklist(event):
+    """处理/clearblacklist命令，清空黑名单"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。\n请在 .env 文件中设置 BLACKLIST_ENABLED=true")
+            return
+        
+        # 确认操作
+        await event.reply(
+            "⚠️ 警告：此操作将清空所有黑名单记录！\n\n"
+            "请发送 /confirmclear 确认清空，或发送其他命令取消。"
+        )
+        logger.info(f"管理员 {sender_id} 请求清空黑名单，等待确认")
+        
+    except Exception as e:
+        logger.error(f"准备清空黑名单时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"准备清空黑名单时出错: {e}")
+
+
+async def handle_confirm_clear_blacklist(event):
+    """处理/confirmclear命令，确认清空黑名单"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。")
+            return
+        
+        # 执行清空
+        db_manager = get_db_manager()
+        count = db_manager.clear_blacklist()
+        
+        success_msg = f"✅ 已成功清空黑名单\n\n"
+        success_msg += f"• 已将 {count} 条记录设置为非活跃状态\n"
+        success_msg += f"• 所有用户现在可以正常使用机器人\n\n"
+        success_msg += f"注意：历史记录已保留，但不再生效"
+        
+        await event.reply(success_msg)
+        logger.info(f"管理员 {sender_id} 已清空黑名单（{count} 条记录）")
+        
+    except Exception as e:
+        logger.error(f"清空黑名单时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"清空黑名单时出错: {e}")
+
+
+async def handle_blacklist_stats(event):
+    """处理/blackliststats命令，查看黑名单统计信息"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    try:
+        from database import get_db_manager
+        from config import BLACKLIST_ENABLED, BLACKLIST_THRESHOLD_COUNT, BLACKLIST_THRESHOLD_HOURS
+        
+        # 检查黑名单功能是否启用
+        if not BLACKLIST_ENABLED:
+            await event.reply("黑名单功能未启用。\n请在 .env 文件中设置 BLACKLIST_ENABLED=true")
+            return
+        
+        # 获取统计信息
+        db_manager = get_db_manager()
+        stats = db_manager.get_blacklist_stats()
+        
+        # 构建统计消息
+        stats_msg = f"📊 **黑名单统计信息**\n\n"
+        stats_msg += f"**基础统计**\n"
+        stats_msg += f"• 活跃黑名单: {stats['active_count']} 人\n"
+        stats_msg += f"• 总记录数: {stats['total_count']} 条\n"
+        stats_msg += f"• 本周新增: {stats['week_new']} 人\n\n"
+        
+        stats_msg += f"**检测配置**\n"
+        stats_msg += f"• 违规阈值: {BLACKLIST_THRESHOLD_COUNT} 次\n"
+        stats_msg += f"• 时间窗口: {BLACKLIST_THRESHOLD_HOURS} 小时\n"
+        stats_msg += f"• 功能状态: {'启用' if BLACKLIST_ENABLED else '禁用'}\n\n"
+        
+        stats_msg += f"**说明**\n"
+        stats_msg += f"用户在 {BLACKLIST_THRESHOLD_HOURS} 小时内违规拉入机器人 {BLACKLIST_THRESHOLD_COUNT} 次，将被自动加入黑名单。"
+        
+        await event.reply(stats_msg, link_preview=False)
+        logger.info(f"已向管理员 {sender_id} 发送黑名单统计信息")
+        
+    except Exception as e:
+        logger.error(f"查看黑名单统计时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"查看黑名单统计时出错: {e}")

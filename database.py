@@ -95,6 +95,40 @@ class DatabaseManager:
                 button_message_id INTEGER
             )
         """)
+        
+        # 创建黑名单表
+        self._create_blacklist_table(cursor)
+    
+    def _create_blacklist_table(self, cursor):
+        """
+        创建黑名单表
+
+        Args:
+            cursor: 数据库游标
+        """
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reason TEXT,
+                violation_count INTEGER DEFAULT 1,
+                last_violation_at TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                added_by_admin TEXT
+            )
+        """)
+        
+        # 创建索引
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_blacklist_status
+            ON blacklist(status)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_blacklist_added_at
+            ON blacklist(added_at DESC)
+        """)
 
     def _create_indexes(self, cursor):
         """
@@ -686,6 +720,230 @@ class DatabaseManager:
                 f.write(f"**消息数量**: {message_count}\n\n")
                 f.write(f"**总结内容**:\n\n{summary_text}\n\n")
                 f.write("---\n\n")
+
+
+    # ==================== 黑名单管理方法 ====================
+    
+    def add_to_blacklist(self, user_id: int, username: str = None, 
+                       reason: str = None, added_by: str = None) -> bool:
+        """
+        添加用户到黑名单
+
+        Args:
+            user_id: 用户ID
+            username: 用户名（可选）
+            reason: 加入原因（可选）
+            added_by: 添加的管理员（可选）
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 检查是否已存在
+            cursor.execute("SELECT user_id FROM blacklist WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                # 更新现有记录
+                cursor.execute("""
+                    UPDATE blacklist 
+                    SET status = 'active',
+                        violation_count = violation_count + 1,
+                        last_violation_at = CURRENT_TIMESTAMP,
+                        reason = COALESCE(?, reason),
+                        added_by_admin = COALESCE(?, added_by_admin),
+                        username = COALESCE(?, username)
+                    WHERE user_id = ?
+                """, (reason, added_by, username, user_id))
+                username_display = username or "未知"
+                logger.info(f"更新黑名单记录: 用户 {user_id} ({username_display})")
+            else:
+                # 插入新记录
+                cursor.execute("""
+                    INSERT INTO blacklist (user_id, username, reason, added_by_admin)
+                    VALUES (?, ?, ?, ?)
+                """, (user_id, username, reason, added_by))
+                logger.info(f"添加到黑名单: 用户 {user_id} ({username}), 原因: {reason}")
+            
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            logger.error(f"添加到黑名单失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+    
+    def remove_from_blacklist(self, user_id: int) -> bool:
+        """
+        从黑名单移除用户
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 软删除：设置状态为inactive
+            cursor.execute("""
+                UPDATE blacklist 
+                SET status = 'inactive'
+                WHERE user_id = ?
+            """, (user_id,))
+            
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if affected > 0:
+                logger.info(f"从黑名单移除: 用户 {user_id}")
+                return True
+            else:
+                logger.warning(f"用户 {user_id} 不在黑名单中")
+                return False
+            
+        except Exception as e:
+            logger.error(f"从黑名单移除失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+    
+    def is_user_blacklisted(self, user_id: int) -> bool:
+        """
+        检查用户是否在黑名单中
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            bool: 是否在黑名单中
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT user_id FROM blacklist 
+                WHERE user_id = ? AND status = 'active'
+            """, (user_id,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"检查黑名单失败: {type(e).__name__}: {e}", exc_info=True)
+            return False
+    
+    def get_blacklist(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        获取黑名单列表
+
+        Args:
+            limit: 返回记录数量
+
+        Returns:
+            黑名单记录列表
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM blacklist
+                WHERE status = 'active'
+                ORDER BY added_at DESC
+                LIMIT ?
+            """, (limit,))
+            
+            rows = cursor.fetchall()
+            conn.close()
+            
+            blacklist = [dict(row) for row in rows]
+            logger.info(f"查询到 {len(blacklist)} 条黑名单记录")
+            return blacklist
+            
+        except Exception as e:
+            logger.error(f"查询黑名单失败: {type(e).__name__}: {e}", exc_info=True)
+            return []
+    
+    def clear_blacklist(self) -> int:
+        """
+        清空黑名单（软删除：设置所有记录为inactive）
+
+        Returns:
+            int: 影响的记录数
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE blacklist
+                SET status = 'inactive'
+                WHERE status = 'active'
+            """)
+            
+            affected = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"已清空黑名单: {affected} 条记录")
+            return affected
+            
+        except Exception as e:
+            logger.error(f"清空黑名单失败: {type(e).__name__}: {e}", exc_info=True)
+            return 0
+    
+    def get_blacklist_stats(self) -> Dict[str, Any]:
+        """
+        获取黑名单统计信息
+
+        Returns:
+            统计信息字典
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # 活跃黑名单数量
+            cursor.execute("""
+                SELECT COUNT(*) FROM blacklist WHERE status = 'active'
+            """)
+            active_count = cursor.fetchone()[0]
+            
+            # 总黑名单数量
+            cursor.execute("""
+                SELECT COUNT(*) FROM blacklist
+            """)
+            total_count = cursor.fetchone()[0]
+            
+            # 本周新增
+            cursor.execute("""
+                SELECT COUNT(*) FROM blacklist 
+                WHERE added_at >= datetime('now', '-7 days')
+                AND status = 'active'
+            """)
+            week_new = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            stats = {
+                'active_count': active_count,
+                'total_count': total_count,
+                'week_new': week_new
+            }
+            
+            logger.info(f"黑名单统计: {stats}")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"获取黑名单统计失败: {type(e).__name__}: {e}", exc_info=True)
+            return {'active_count': 0, 'total_count': 0, 'week_new': 0}
 
 
 # 创建全局数据库管理器实例

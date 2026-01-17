@@ -143,6 +143,20 @@ else:
     ADMIN_LIST = ['me']
     logger.info("未配置管理员ID，默认发送给机器人所有者")
 
+# ==================== 黑名单配置 ====================
+
+# 是否启用黑名单功能
+BLACKLIST_ENABLED = os.getenv('BLACKLIST_ENABLED', 'true').lower() == 'true'
+logger.info(f"黑名单功能: {'启用' if BLACKLIST_ENABLED else '禁用'}")
+
+# 黑名单检测阈值：时间窗口内的违规次数
+BLACKLIST_THRESHOLD_COUNT = int(os.getenv('BLACKLIST_THRESHOLD_COUNT', '3'))
+logger.info(f"黑名单检测阈值: {BLACKLIST_THRESHOLD_COUNT} 次")
+
+# 黑名单检测时间窗口（小时）
+BLACKLIST_THRESHOLD_HOURS = int(os.getenv('BLACKLIST_THRESHOLD_HOURS', '1'))
+logger.info(f"黑名单检测时间窗口: {BLACKLIST_THRESHOLD_HOURS} 小时")
+
 # 读取配置文件
 def load_config():
     """从配置文件读取配置（不包括AI配置）"""
