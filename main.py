@@ -22,9 +22,11 @@ import logging
 import os
 import sys
 import threading
+import time
 from telethon import TelegramClient
-from telethon.events import NewMessage, CallbackQuery
+from telethon.events import NewMessage, CallbackQuery, ChatAction
 from telethon.tl.functions.bots import SetBotCommandsRequest
+from telethon.tl.functions.channels import LeaveChannelRequest
 from telethon.tl.types import BotCommand, BotCommandScopeDefault
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -241,6 +243,168 @@ async def main():
         )
         logger.info("投票重新生成回调处理器已注册")
 
+        # 添加自动退出事件处理器
+        logger.debug("添加自动退出事件处理器...")
+        
+        # 用于去重的事件ID集合
+        processed_events = set()
+        
+        # 获取机器人自己的ID（缓存，避免每次事件都调用get_me）
+        bot_id = None
+        
+        async def handle_auto_leave(event):
+            """处理机器人被添加到群组/频道的自动退出逻辑"""
+            try:
+                # 使用缓存的机器人ID，避免重复网络请求
+                nonlocal bot_id
+                if bot_id is None:
+                    bot_id = (await client.get_me()).id
+                    logger.debug(f"已缓存机器人ID: {bot_id}")
+                
+                # 检查是否是机器人被添加到群组/频道
+                if not (event.user_added and event.user_id == bot_id):
+                    return
+                
+                # 去重检查：使用chat_id和时间戳防止重复处理
+                # ChatAction事件没有msg_id，使用其他属性组合
+                current_time = int(time.time())
+                # 10秒内相同chat_id的事件视为重复
+                event_key = f"{event.chat_id}_{current_time // 10}"
+                if event_key in processed_events:
+                    logger.debug(f"事件已处理（短时间），跳过: chat_id={event.chat_id}")
+                    return
+                
+                # 清理旧的key（保留最近30秒的）
+                old_keys = {k for k in processed_events if int(k.split('_')[-1]) < current_time - 30}
+                for old_key in old_keys:
+                    processed_events.remove(old_key)
+                
+                processed_events.add(event_key)
+                
+                # 直接使用 event.chat_id，避免重复 get_entity 导致缓存问题
+                chat_id = event.chat_id
+                
+                # 提取邀请者ID（确保是整数）
+                inviter_id = None
+                
+                # 方法1：从 action_message 提取（最常用）
+                if event.action_message and hasattr(event.action_message, 'from_id'):
+                    from_id = event.action_message.from_id
+                    if hasattr(from_id, 'user_id'):
+                        inviter_id = from_id.user_id
+                    else:
+                        inviter_id = from_id
+                
+                # 方法2：从 event 的 added_by 属性提取（某些情况下可用）
+                if not inviter_id:
+                    try:
+                        added_by = getattr(event, 'added_by', None)
+                        if added_by and hasattr(added_by, 'user_id'):
+                            inviter_id = added_by.user_id
+                        elif added_by and isinstance(added_by, int):
+                            inviter_id = added_by
+                    except Exception as e:
+                        logger.debug(f"方法2提取邀请者ID失败: {e}")
+                
+                # 方法3：尝试从 event 的其他属性提取
+                if not inviter_id:
+                    try:
+                        # ChatAction 可能有其他属性包含邀请者信息
+                        if hasattr(event, 'user') and hasattr(event.user, 'id'):
+                            inviter_id = event.user.id
+                        elif hasattr(event, 'from_id'):
+                            from_id = event.from_id
+                            if hasattr(from_id, 'user_id'):
+                                inviter_id = from_id.user_id
+                            else:
+                                inviter_id = from_id
+                    except Exception as e:
+                        logger.debug(f"方法3提取邀请者ID失败: {e}")
+                
+                # 确保inviter_id是整数，而不是User对象
+                if inviter_id and not isinstance(inviter_id, int):
+                    logger.debug(f"inviter_id不是整数: {type(inviter_id)}, 尝试提取user_id")
+                    if hasattr(inviter_id, 'user_id'):
+                        inviter_id = inviter_id.user_id
+                    elif hasattr(inviter_id, 'id'):
+                        inviter_id = inviter_id.id
+                
+                if not inviter_id or not isinstance(inviter_id, int):
+                    logger.warning(f"无法提取有效的邀请者ID，事件详情: action_message={event.action_message}, user_added={event.user_added}, user_id={event.user_id}, chat_id={event.chat_id}")
+                    return
+                
+                # 获取群组/频道信息用于日志（使用缓存）
+                chat_info = ""
+                chat_type = "未知"
+                try:
+                    chat_entity = await client.get_entity(chat_id)
+                    if hasattr(chat_entity, 'title'):
+                        chat_info = f"\"{chat_entity.title}\" "
+                    
+                    # 使用 event.is_channel 属性来判断类型
+                    # 这是 Telethon 提供的最可靠的方法
+                    chat_type = "频道" if event.is_channel else "群组"
+                        
+                    logger.debug(f"实体类型判断: chat_type={chat_type}, event.is_channel={event.is_channel}, broadcast={getattr(chat_entity, 'broadcast', None)}, megagroup={getattr(chat_entity, 'megagroup', None)}")
+                        
+                except Exception as e:
+                    logger.warning(f"获取群组/频道信息失败: {e}")
+                    chat_type = "未知"
+                
+                # 记录所有添加事件
+                logger.info(f"机器人被添加到 {chat_type} {chat_info}(ID: {chat_id})，邀请者: {inviter_id}")
+                
+                # 立即记录 chat_type 用于调试
+                logger.debug(f"[DEBUG] chat_type 最终值: {chat_type}, event.is_channel: {event.is_channel}")
+                
+                # 验证管理员权限
+                if inviter_id not in ADMIN_LIST:
+                    logger.warning(f"非法邀请！邀请者 {inviter_id} 未在管理员列表中，准备从 {chat_type} {chat_info}退出")
+                    
+                    # 发送提示消息（静默处理失败，不产生错误日志）
+                    try:
+                        # 根据群组/频道类型显示不同的提示消息
+                        if chat_type == "频道":
+                            message = "⚠️ 此机器人未授权在该频道使用，正在退出...\n\n如需使用，请联系管理员"
+                            logger.debug(f"选择频道提示消息: {message}")
+                        else:
+                            message = "⚠️ 此机器人未授权在该群组使用，正在退出...\n\n如需使用，请联系管理员"
+                            logger.debug(f"选择群组提示消息: {message}")
+                        
+                        logger.info(f"准备发送消息到 {chat_type} {chat_info}(ID: {chat_id}): {message}")
+                        await client.send_message(
+                            chat_id,
+                            message,
+                            link_preview=False
+                        )
+                        logger.info(f"已向 {chat_type} {chat_info}发送退出提示消息")
+                    except Exception as e:
+                        logger.debug(f"发送消息失败（静默处理）: {type(e).__name__}: {e}")
+                        # 静默处理：如果频道禁止发消息，直接执行退出
+                        pass
+                    
+                    # 退出群组/频道 - 使用chat_type而不是event.is_channel
+                    try:
+                        if chat_type == "频道":
+                            # 频道使用 LeaveChannelRequest
+                            await client(LeaveChannelRequest(channel=chat_id))
+                        else:
+                            # 群组使用 delete_dialog
+                            await client.delete_dialog(chat_id)
+                        
+                        logger.warning(f"✅ 已自动从 {chat_type} {chat_info}(ID: {chat_id}) 退出，邀请者: {inviter_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"退出 {chat_type} {chat_info}失败: {type(e).__name__}: {e}")
+                else:
+                    logger.info(f"✅ 管理员 {inviter_id} 将机器人添加到 {chat_type} {chat_info}(ID: {chat_id})")
+                    
+            except Exception as e:
+                logger.error(f"处理自动退出事件时发生错误: {type(e).__name__}: {e}", exc_info=True)
+        
+        client.add_event_handler(handle_auto_leave, ChatAction())
+        logger.info("自动退出事件处理器已注册")
+
         logger.info("命令处理器添加完成")
 
         # 启动客户端
@@ -366,7 +530,6 @@ async def main():
                 logger.info("关机标记文件已删除")
                 
                 # 等待消息发送完成
-                import time
                 time.sleep(2)
                 
                 # 执行关机

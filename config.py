@@ -24,7 +24,7 @@ from config_validators import ScheduleValidator, LegacyScheduleValidator
 
 # 导入日志配置模块
 try:
-    from logger_config import logger, get_log_level
+    from logger_config import logger, get_log_level, update_all_loggers_level
     LOG_SYSTEM_INITIALIZED = True
 except ImportError:
     # 如果logger_config模块导入失败，使用基本配置（向后兼容）
@@ -249,6 +249,13 @@ if current_level != final_log_level:
     logger.info(f"日志级别已从 {logging.getLevelName(current_level)} 更改为 {logging.getLevelName(final_log_level)}")
 else:
     logger.info(f"当前日志级别: {logging.getLevelName(current_level)}")
+
+# 如果日志系统已正确初始化，动态更新所有logger的处理器级别
+if LOG_SYSTEM_INITIALIZED and final_log_level_str:
+    try:
+        update_all_loggers_level(final_log_level_str)
+    except Exception as e:
+        logger.warning(f"更新所有logger级别时出错: {e}")
 
 # 机器人状态管理
 BOT_STATE_RUNNING = "running"

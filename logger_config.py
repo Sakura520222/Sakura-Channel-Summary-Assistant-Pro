@@ -194,6 +194,47 @@ root_logger.addHandler(console_handler)
 logger = setup_logger(__name__, None, get_log_level(LOG_LEVEL))
 
 
+def update_all_loggers_level(level_str: str):
+    """动态更新所有已创建的 logger 及其处理器的级别
+    
+    Args:
+        level_str: 日志级别字符串 ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+    """
+    level = get_log_level(level_str)
+    
+    # 需要更新的 logger 列表
+    logger_names = [
+        'main',
+        'telegram_client',
+        'ai_client',
+        'database',
+        'scheduler',
+        'command_handlers',
+        __name__,
+        'console'
+    ]
+    
+    # 更新每个 logger 及其处理器
+    for logger_name in logger_names:
+        try:
+            logger_obj = logging.getLogger(logger_name)
+            logger_obj.setLevel(level)
+            
+            # 更新所有处理器的级别
+            for handler in logger_obj.handlers:
+                handler.setLevel(level)
+        except Exception as e:
+            print(f"更新 logger '{logger_name}' 级别时出错: {e}")
+    
+    # 更新根 logger 及其处理器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    for handler in root_logger.handlers:
+        handler.setLevel(level)
+    
+    print(f"已将所有日志级别更新为: {level_str}")
+
+
 def _get_dir_size(dir_path: str) -> int:
     """
     计算目录的总大小
