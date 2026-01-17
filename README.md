@@ -131,9 +131,6 @@ LLM_MODEL=deepseek-chat
 # LLM_BASE_URL=https://api.openai.com/v1
 # LLM_MODEL=gpt-3.5-turbo
 
-# ===== 频道配置 =====
-TARGET_CHANNEL=https://t.me/your_channel
-
 # ===== 管理员配置（支持多个ID，用逗号分隔） =====
 REPORT_ADMIN_IDS=admin_id1,admin_id2
 
@@ -144,19 +141,22 @@ LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 ENABLE_POLL=True  # 是否启用投票功能，默认开启
 ```
 
-#### AI配置文件 (config.json)
+#### 配置文件 (config.json)
 
-系统会在首次运行时自动生成 `config.json` 文件，包含以下配置：
+系统会在首次运行时自动生成 `config.json` 文件，包含频道列表、时间配置等信息：
 
 ```json
 {
-  "api_key": "your_api_key",
-  "base_url": "https://api.deepseek.com",
-  "model": "deepseek-chat"
+  "channels": [
+    "https://t.me/example_channel"
+  ],
+  "send_report_to_source": true,
+  "enable_poll": true,
+  "log_level": "INFO"
 }
 ```
 
-您可以通过 `/setaicfg` 命令在线修改AI配置。
+注意：AI配置只能通过 `.env` 文件配置，修改后需要重启机器人生效。
 
 ---
 
@@ -175,15 +175,13 @@ ENABLE_POLL=True  # 是否启用投票功能，默认开启
 |------|------|----------|
 | `/summary` | `/立即总结` | 立即生成本周频道消息汇总 |
 
-#### 3. AI配置
+#### 3. 提示词管理
 | 命令 | 别名 | 功能说明 |
 |------|------|----------|
 | `/showprompt` | `/查看提示词` | 查看当前AI总结提示词 |
 | `/setprompt` | `/设置提示词` | 设置自定义AI总结提示词 |
 | `/showpollprompt` | `/查看投票提示词` | 查看当前投票生成提示词 |
 | `/setpollprompt` | `/设置投票提示词` | 设置自定义投票生成提示词 |
-| `/showaicfg` | `/查看AI配置` | 查看当前AI配置信息 |
-| `/setaicfg` | `/设置AI配置` | 设置自定义AI配置 |
 
 #### 4. 频道管理
 | 命令 | 别名 | 功能说明 |
@@ -222,7 +220,40 @@ ENABLE_POLL=True  # 是否启用投票功能，默认开启
 | `/showloglevel` | `/查看日志级别` | 查看当前日志级别 |
 | `/setloglevel` | `/设置日志级别` | 设置日志级别 |
 | `/clearcache` | `/清除缓存` | 清除讨论组ID缓存 |
+| `/cleanlogs` | `/清理日志` | 清理旧日志文件 |
 | `/changelog` | `/更新日志` | 查看更新日志 |
+
+**日志文件说明**：
+
+每次启动机器人时，会在 `log/` 目录下创建基于时间戳的新目录，所有日志文件都在该目录中：
+
+```
+log/
+├── 20260117_191530/        # 2026-01-17 19:15:30启动的会话
+│   ├── console.log          # 控制台日志
+│   ├── main.log            # 主程序日志
+│   ├── telegram.log        # Telegram客户端日志
+│   ├── ai_client.log       # AI客户端日志
+│   ├── database.log        # 数据库操作日志
+│   ├── scheduler.log       # 调度器日志
+│   ├── command_handlers.log # 命令处理日志
+│   ├── error.log           # 错误日志
+│   ├── telegram_error.log   # Telegram错误日志
+│   ├── ai_error.log        # AI错误日志
+│   └── database_error.log  # 数据库错误日志
+├── 20260117_193045/        # 2026-01-17 19:30:45启动的会话
+│   └── ... (同样的日志文件)
+└── archive/                   # 归档目录
+```
+
+**日志文件说明**：
+- `console.log` - 记录所有控制台输出（包括print语句）
+- `main.log` - 主程序日志
+- `telegram.log` - Telegram客户端日志
+- `ai_client.log` - AI客户端日志
+- `database.log` - 数据库操作日志
+- `scheduler.log` - 调度器日志
+- `error.log` - 错误日志
 
 #### 9. 历史记录
 | 命令 | 别名 | 功能说明 |
@@ -355,7 +386,7 @@ Sakura-Channel-Summary-Assistant-Pro/
 │   ├── poll_prompt.txt            # 投票提示词文件（运行时生成）
 │   └── .last_summary_time.json    # 时间记录文件（运行时生成）
 │
-├── 📄 会话文件（运行时生成）
+├── � 会话文件（运行时生成）
 │   ├── bot_session.session        # Telegram主会话
 │   ├── health_check.session       # 健康检查会话
 │   └── *.session-journal          # 会话日志文件
