@@ -1707,6 +1707,12 @@ async def handle_add_blacklist(event):
             await event.reply(f"无效的用户ID: {parts[1]}")
             return
         
+        # 检查被添加的用户是否是管理员
+        if user_id in ADMIN_LIST:
+            await event.reply(f"❌ 无法将用户 `{user_id}` 添加到黑名单\n\n该用户是管理员，不能被添加到黑名单。")
+            logger.warning(f"管理员 {sender_id} 尝试将管理员 {user_id} 添加到黑名单，操作已拒绝")
+            return
+        
         # 解析原因（可选）
         reason = ' '.join(parts[2:]) if len(parts) > 2 else "管理员手动添加"
         
