@@ -1020,11 +1020,10 @@ async def handle_shutdown(event):
     except Exception as e:
         logger.error(f"发送关机通知失败: {e}")
     
-    # 关闭当前进程
-    import sys
-    import time
-    time.sleep(1)  # 等待消息发送完成
-    sys.exit(0)
+    # 优雅关闭：断开客户端连接
+    # 移除 sys.exit(0)，让 main() 函数的 run_until_disconnected 自然结束
+    await event.client.disconnect()
+    logger.info("客户端已断开连接")
 
 async def handle_pause(event):
     """处理/pause命令，暂停所有定时任务"""

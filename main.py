@@ -158,6 +158,9 @@ async def send_startup_message(client):
 async def main():
     logger.info(f"开始初始化机器人服务 v{__version__}...")
     
+    scheduler = None
+    client = None
+    
     try:
         # 初始化错误处理系统
         logger.info("初始化错误处理系统...")
@@ -773,6 +776,32 @@ async def main():
         await client.run_until_disconnected()
     except Exception as e:
         logger.critical(f"机器人服务初始化或运行失败: {type(e).__name__}: {e}", exc_info=True)
+    finally:
+        # 确保资源被正确释放
+        logger.info("开始清理资源...")
+        
+        # 停止调度器（检查是否还在运行）
+        if scheduler:
+            try:
+                if scheduler.running:
+                    scheduler.shutdown(wait=True)
+                    logger.info("调度器已停止")
+                else:
+                    logger.info("调度器之前已停止，跳过关闭操作")
+            except Exception as e:
+                logger.error(f"停止调度器时出错: {e}")
+        
+        # 断开客户端连接（检查连接状态）
+        if client and client.is_connected():
+            try:
+                await client.disconnect()
+                logger.info("客户端连接已安全断开")
+            except Exception as e:
+                logger.error(f"断开客户端连接时出错: {e}")
+        elif client:
+            logger.info("客户端连接已断开，无需操作")
+        
+        logger.info("资源清理完成")
 
 if __name__ == "__main__":
     logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ====")
