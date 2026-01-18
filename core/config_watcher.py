@@ -73,6 +73,9 @@ class ReloadResult:
     config_type: str
     message: str
     details: Optional[Dict] = None
+    old_values: Optional[Dict] = None  # 变更前的值，用于对比
+    error_type: Optional[str] = None   # 错误类型
+    error_location: Optional[str] = None  # 错误位置
 
 
 class ConfigFileHandler(FileSystemEventHandler):
@@ -140,7 +143,8 @@ class ConfigFileHandler(FileSystemEventHandler):
         for file_path in files_to_reload:
             try:
                 logger.info(f"开始重载配置文件: {file_path}")
-                result = self.reload_callback(file_path)
+                # 传递 is_auto_reload=True 标识这是自动重载
+                result = self.reload_callback(file_path, is_auto_reload=True)
                 
                 if result.success:
                     logger.info(f"配置重载成功: {result.message}")

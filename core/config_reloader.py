@@ -61,13 +61,15 @@ class ConfigReloader:
     def __init__(self):
         """初始化重载管理器"""
         self._reload_stats = ReloadStats()
+        self._main_loop = None  # 主事件循环引用
         logger.info("配置重载管理器初始化完成")
     
-    def reload_by_file(self, file_path: str) -> ReloadResult:
+    def reload_by_file(self, file_path: str, is_auto_reload: bool = False) -> ReloadResult:
         """根据文件路径重载对应配置
         
         Args:
             file_path: 变更的配置文件路径
+            is_auto_reload: 是否为自动重载（Watchdog 触发）
             
         Returns:
             ReloadResult: 重载结果
@@ -87,19 +89,24 @@ class ConfigReloader:
         
         # 根据类型重载
         if config_type == 'env':
-            return self._reload_env()
+            result = self._reload_env()
         elif config_type == 'config':
-            return self._reload_config_json()
+            result = self._reload_config_json()
         elif config_type == 'prompt':
-            return self._reload_prompt()
+            result = self._reload_prompt()
         elif config_type == 'poll_prompt':
-            return self._reload_poll_prompt()
+            result = self._reload_poll_prompt()
         else:
-            return ReloadResult(
+            result = ReloadResult(
                 success=False,
                 config_type=config_type,
                 message=f'未知的配置类型: {config_type}'
             )
+        
+        # 发送通知（异步，不阻塞重载流程）
+        self._send_notification_if_needed(result, is_auto_reload)
+        
+        return result
     
     def reload_all(self) -> Tuple[bool, str, Dict]:
         """重载所有配置
@@ -186,6 +193,15 @@ class ConfigReloader:
             ReloadResult: 重载结果
         """
         try:
+            # 保存旧配置值用于对比
+            old_values = {
+                'channels': len(CHANNELS),
+                'summary_schedules': len(SUMMARY_SCHEDULES),
+                'poll_settings': len(CHANNEL_POLL_SETTINGS),
+                'send_report_to_source': SEND_REPORT_TO_SOURCE,
+                'enable_poll': ENABLE_POLL
+            }
+            
             # 1. 读取并验证新配置
             new_config = self._load_and_validate_config_json()
             if new_config is None:
@@ -193,7 +209,10 @@ class ConfigReloader:
                     success=False,
                     config_type='config',
                     message='配置验证失败',
-                    details={}
+                    details={},
+                    old_values=old_values,
+                    error_type='ValidationError',
+                    error_location='config.json'
                 )
             
             # 2. 原子化更新全局变量
@@ -215,10 +234,27 @@ class ConfigReloader:
                     scheduler_restarted = True
                     logger.info("调度器重启任务已提交（后台异步执行）")
                 except RuntimeError:
-                    # 没有运行中的事件循环，记录警告但不尝试创建新循环
-                    # 避免使用 asyncio.run() 导致事件循环冲突
-                    logger.warning("没有运行中的事件循环，跳过调度器重启")
-                    scheduler_restarted = False
+                    # 当前线程没有事件循环（Watchdog 线程）
+                    # 尝试使用主事件循环的线程安全方法
+                    if self._main_loop is not None:
+                        try:
+                            # 创建协程函数，避免 lambda 闭包问题
+                            async def _restart_scheduler():
+                                await self._restart_scheduler_if_needed(new_config)
+                            
+                            # 使用线程安全的方式将任务投递到主循环
+                            self._main_loop.call_soon_threadsafe(
+                                lambda: asyncio.create_task(_restart_scheduler())
+                            )
+                            scheduler_restarted = True
+                            logger.info("已通过线程安全方式投递调度器重启任务到主循环")
+                        except Exception as e:
+                            logger.error(f"使用 call_soon_threadsafe 重启调度器失败: {type(e).__name__}: {e}")
+                            scheduler_restarted = False
+                    else:
+                        # 没有保存主循环引用，无法重启调度器
+                        logger.warning("没有运行中的事件循环且未保存主循环引用，跳过调度器重启")
+                        scheduler_restarted = False
             else:
                 scheduler_restarted = False
             
@@ -238,7 +274,8 @@ class ConfigReloader:
                 success=True,
                 config_type='config',
                 message='JSON配置已重载',
-                details=details
+                details=details,
+                old_values=old_values
             )
             
         except Exception as e:
@@ -247,7 +284,9 @@ class ConfigReloader:
                 success=False,
                 config_type='config',
                 message=f'重载失败: {e}',
-                details={}
+                details={},
+                error_type=type(e).__name__,
+                error_location='config.json'
             )
     
     def _load_and_validate_config_json(self) -> Optional[Dict]:
@@ -276,10 +315,23 @@ class ConfigReloader:
             logger.warning(f"配置文件 {CONFIG_FILE} 不存在")
             return {}
         except json.JSONDecodeError as e:
+            error_msg = f"JSONDecodeError: {str(e)}"
             logger.error(f"配置文件格式错误: {e}")
+            # 将错误信息存储到实例变量，供外部访问
+            self._last_json_error = {
+                'type': 'JSONDecodeError',
+                'message': str(e),
+                'line': getattr(e, 'lineno', 'Unknown'),
+                'column': getattr(e, 'colno', 'Unknown'),
+                'position': getattr(e, 'pos', 'Unknown')
+            }
             return None
         except Exception as e:
             logger.error(f"读取配置文件时出错: {type(e).__name__}: {e}", exc_info=True)
+            self._last_json_error = {
+                'type': type(e).__name__,
+                'message': str(e)
+            }
             return None
     
     def _validate_config_json(self, config: Dict) -> List[str]:
@@ -551,6 +603,43 @@ class ConfigReloader:
             return "暂无重载记录"
         
         return f"总重载: {stats.total} 次，成功: {stats.success} 次，失败: {stats.failed} 次"
+    
+    def _send_notification_if_needed(self, result: ReloadResult, is_auto_reload: bool):
+        """根据需要发送通知
+        
+        在后台任务中异步发送通知，不阻塞重载流程。
+        支持从 Watchdog 线程安全地发送通知到主事件循环。
+        
+        Args:
+            result: 重载结果
+            is_auto_reload: 是否为自动重载
+        """
+        from .config_notifier import send_reload_notification
+        
+        try:
+            # 尝试获取当前线程的事件循环
+            loop = asyncio.get_running_loop()
+            # 在后台任务中异步发送通知
+            loop.create_task(send_reload_notification(result, is_auto_reload))
+        except RuntimeError:
+            # 当前线程没有事件循环（Watchdog 线程）
+            # 尝试使用主事件循环的线程安全方法
+            if self._main_loop is not None:
+                try:
+                    # 创建协程函数，避免 lambda 闭包问题
+                    async def _send_notification():
+                        await send_reload_notification(result, is_auto_reload)
+                    
+                    # 使用线程安全的方式将任务投递到主循环
+                    self._main_loop.call_soon_threadsafe(
+                        lambda: asyncio.create_task(_send_notification())
+                    )
+                    logger.debug("已通过线程安全方式投递通知任务到主循环")
+                except Exception as e:
+                    logger.error(f"使用 call_soon_threadsafe 发送通知失败: {type(e).__name__}: {e}")
+            else:
+                # 没有保存主循环引用，无法发送通知
+                logger.warning("没有运行中的事件循环且未保存主循环引用，跳过配置重载通知")
 
 
 # 全局重载管理器实例
@@ -577,11 +666,12 @@ def init_global_reloader() -> ConfigReloader:
     return _global_reloader
 
 
-def reload_config_by_file(file_path: str) -> ReloadResult:
+def reload_config_by_file(file_path: str, is_auto_reload: bool = False) -> ReloadResult:
     """根据文件路径重载配置（便捷函数）
     
     Args:
         file_path: 变更的配置文件路径
+        is_auto_reload: 是否为自动重载（Watchdog 触发）
         
     Returns:
         ReloadResult: 重载结果
@@ -594,7 +684,7 @@ def reload_config_by_file(file_path: str) -> ReloadResult:
             message='重载管理器未初始化'
         )
     
-    return reloader.reload_by_file(file_path)
+    return reloader.reload_by_file(file_path, is_auto_reload=is_auto_reload)
 
 
 def reload_all_configs() -> Tuple[bool, str, Dict]:

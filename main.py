@@ -705,11 +705,13 @@ async def run_bot_instance():
         
         # 初始化配置重载管理器
         config_reloader = init_global_reloader()
-        logger.info("配置重载管理器初始化完成")
+        # 保存主事件循环引用，用于线程安全的通知发送
+        config_reloader._main_loop = asyncio.get_running_loop()
+        logger.info("配置重载管理器初始化完成，已保存主事件循环引用")
         
-        # 初始化配置文件监控器
+        # 初始化配置文件监控器（支持自动重载通知）
         config_watcher = init_global_watcher(
-            reload_callback=lambda file_path: config_reloader.reload_by_file(file_path),
+            reload_callback=lambda file_path, **kwargs: config_reloader.reload_by_file(file_path, **kwargs),
             debounce_seconds=2.0
         )
         
