@@ -79,17 +79,20 @@ async def init_scheduler():
                 'fri': 4, 'sat': 5, 'sun': 6
             }
             
-            for day in days:
-                if day.lower() in day_map:
-                    job = scheduler.add_job(
-                        main_job_wrapper,
-                        'interval',
-                        weeks=1,
-                        day_of_week=day_map[day.lower()],
-                        start_date=datetime.now(),
-                        kwargs={'channel': channel}
-                    )
-                    logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{day} {hour:02d}:{minute:02d}")
+            # APScheduler 的 cron 触发器支持多个星期几，用逗号分隔
+            cron_days = ','.join([str(day_map[day.lower()]) for day in days if day.lower() in day_map])
+            
+            if cron_days:
+                job = scheduler.add_job(
+                    main_job_wrapper,
+                    'cron',
+                    day_of_week=cron_days,
+                    hour=hour,
+                    minute=minute,
+                    kwargs={'channel': channel}
+                )
+                days_cn = '、'.join(days)
+                logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{days_cn} {hour:02d}:{minute:02d}")
         
         # 添加清理任务（每天凌晨3点）
         scheduler.add_job(
@@ -240,17 +243,20 @@ async def graceful_restart_scheduler():
                     'fri': 4, 'sat': 5, 'sun': 6
                 }
                 
-                for day in days:
-                    if day.lower() in day_map:
-                        new_scheduler.add_job(
-                            main_job_wrapper,
-                            'interval',
-                            weeks=1,
-                            day_of_week=day_map[day.lower()],
-                            start_date=datetime.now(),
-                            kwargs={'channel': channel}
-                        )
-                        logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{day} {hour:02d}:{minute:02d}")
+                # APScheduler 的 cron 触发器支持多个星期几，用逗号分隔
+                cron_days = ','.join([str(day_map[day.lower()]) for day in days if day.lower() in day_map])
+                
+                if cron_days:
+                    new_scheduler.add_job(
+                        main_job_wrapper,
+                        'cron',
+                        day_of_week=cron_days,
+                        hour=hour,
+                        minute=minute,
+                        kwargs={'channel': channel}
+                    )
+                    days_cn = '、'.join(days)
+                    logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{days_cn} {hour:02d}:{minute:02d}")
         
         # 7. 添加清理任务（每天凌晨3点）
         new_scheduler.add_job(
