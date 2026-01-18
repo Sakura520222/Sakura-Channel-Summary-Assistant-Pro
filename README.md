@@ -77,6 +77,8 @@ Sakura-频道总结助手是一款专业的Telegram频道管理工具，通过AI
 
 #### 方式一：Docker一键部署（推荐）
 
+**Linux/macOS 系统：**
+
 ```bash
 # 1. 克隆项目
 git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant-Pro.git
@@ -86,7 +88,32 @@ cd Sakura-Channel-Summary-Assistant-Pro
 cp .env.example .env
 # 编辑 .env 文件，填写您的配置
 
-# 3. 启动服务
+# 3. 使用一键部署脚本（推荐）
+chmod +x deploy-docker.sh
+./deploy-docker.sh
+
+# 或手动启动
+docker-compose up -d
+
+# 4. 查看日志（首次运行需要Telegram登录）
+docker-compose logs -f
+```
+
+**Windows 系统：**
+
+```powershell
+# 1. 克隆项目
+git clone https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant-Pro.git
+cd Sakura-Channel-Summary-Assistant-Pro
+
+# 2. 配置环境变量
+copy .env.example .env
+# 使用记事本或其他编辑器编辑 .env 文件
+
+# 3. 使用一键部署脚本（推荐）
+.\deploy-docker.ps1
+
+# 或手动启动
 docker-compose up -d
 
 # 4. 查看日志（首次运行需要Telegram登录）
@@ -109,6 +136,9 @@ cp .env.example .env
 
 # 4. 运行项目
 python main.py
+
+# Windows 用户可以使用 start.bat
+start.bat
 ```
 
 ### 配置说明
@@ -137,6 +167,13 @@ REPORT_ADMIN_IDS=admin_id1,admin_id2
 
 # ===== 日志级别配置 =====
 LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_DIR=log     # 日志目录（默认：log/）
+LOG_RETENTION_DAYS=30  # 日志保留天数（默认：30天）
+
+# ===== 黑名单功能配置 =====
+BLACKLIST_ENABLED=true  # 启用黑名单功能（默认：true）
+BLACKLIST_THRESHOLD_COUNT=3  # 1小时内违规3次自动加入黑名单（默认：3）
+BLACKLIST_THRESHOLD_HOURS=1  # 时间窗口小时数（默认：1）
 
 # ===== 投票功能配置 =====
 ENABLE_POLL=True  # 是否启用投票功能，默认开启
@@ -240,38 +277,6 @@ ENABLE_POLL=True  # 是否启用投票功能，默认开启
 | `/clearblacklist` | `/清空黑名单` | 清空黑名单 |
 | `/blackliststats` | `/黑名单统计` | 查看黑名单统计信息 |
 
-**日志文件说明**：
-
-每次启动机器人时，会在 `log/` 目录下创建基于时间戳的新目录，所有日志文件都在该目录中：
-
-```
-log/
-├── 20260117_191530/        # 2026-01-17 19:15:30启动的会话
-│   ├── console.log          # 控制台日志
-│   ├── main.log            # 主程序日志
-│   ├── telegram.log        # Telegram客户端日志
-│   ├── ai_client.log       # AI客户端日志
-│   ├── database.log        # 数据库操作日志
-│   ├── scheduler.log       # 调度器日志
-│   ├── command_handlers.log # 命令处理日志
-│   ├── error.log           # 错误日志
-│   ├── telegram_error.log   # Telegram错误日志
-│   ├── ai_error.log        # AI错误日志
-│   └── database_error.log  # 数据库错误日志
-├── 20260117_193045/        # 2026-01-17 19:30:45启动的会话
-│   └── ... (同样的日志文件)
-└── archive/                   # 归档目录
-```
-
-**日志文件说明**：
-- `console.log` - 记录所有控制台输出（包括print语句）
-- `main.log` - 主程序日志
-- `telegram.log` - Telegram客户端日志
-- `ai_client.log` - AI客户端日志
-- `database.log` - 数据库操作日志
-- `scheduler.log` - 调度器日志
-- `error.log` - 错误日志
-
 ### 详细使用说明
 
 #### 历史记录功能
@@ -315,8 +320,7 @@ log/
 /stats channel1
 ```
 
-**统计信息包括**：
-- 总总结次数、总处理消息数、平均消息数
+**统计信息包括**：- 总总结次数、总处理消息数、平均消息数
 - 按类型统计（日报/周报/手动总结）
 - 时间分布（本周、本月总结次数）
 - 最近总结时间
@@ -361,6 +365,131 @@ log/
 /deletechannelpoll channel1
 ```
 
+#### 投票重新生成功能
+
+当自动生成的投票效果不理想时，可以通过以下方式重新生成：
+
+**频道模式**：
+1. 投票消息下方会显示"🔄 重新生成投票"按钮
+2. 点击按钮，系统会根据原总结重新生成投票
+3. 旧投票会被删除，新投票会回复到同一位置
+
+**讨论组模式**：
+1. 讨论组中的投票消息下方会显示"🔄 重新生成投票"按钮
+2. 点击按钮，系统会重新生成投票
+3. 旧投票会被删除，新投票会回复到转发消息
+
+**自动清理**：
+- 30天前的投票重新生成记录会自动清理
+- 可以通过修改配置调整保留天数
+
+#### 黑名单功能
+
+黑名单功能用于防止机器人被恶意用户骚扰，保护系统稳定性。
+
+**自动加入黑名单机制**：
+- 默认：1小时内违规3次自动加入黑名单
+- 违规行为包括：频繁发送命令、发送垃圾消息等
+- 可通过环境变量调整阈值和时间窗口
+
+**手动管理**：
+```bash
+# 查看黑名单列表
+/blacklist
+
+# 添加用户到黑名单
+/addblacklist
+# 输入用户ID或用户名
+
+# 从黑名单移除用户
+/removeblacklist
+# 输入用户ID或用户名
+
+# 清空黑名单
+/clearblacklist
+
+# 查看黑名单统计
+/blackliststats
+```
+
+**统计信息包括**：
+- 黑名单总人数
+- 最近添加的记录
+- 自动添加和手动添加的数量
+
+#### 日志管理
+
+**日志统计**：
+```bash
+# 查看日志统计信息
+# 会显示：
+# - 总日志大小
+# - 会话目录数量
+# - 每个会话的详细信息
+```
+
+**日志清理**：
+```bash
+# 清理30天前的日志
+/cleanlogs
+
+# 查看清理预览（不实际删除）
+/cleanlogs preview
+
+# 清理指定天数的日志
+/cleanlogs 60
+```
+
+**日志文件结构**：
+
+每次启动机器人时，会在 `log/` 目录下创建基于时间戳的新目录：
+
+```
+log/
+├── 20260117_191530/        # 2026-01-17 19:15:30启动的会话
+│   ├── console.log          # 控制台日志（所有print输出）
+│   ├── main.log            # 主程序日志
+│   ├── telegram.log        # Telegram客户端日志
+│   ├── ai_client.log       # AI客户端日志
+│   ├── database.log        # 数据库操作日志
+│   ├── scheduler.log       # 调度器日志
+│   ├── command_handlers.log # 命令处理日志
+│   ├── error.log           # 错误日志
+│   ├── telegram_error.log   # Telegram错误日志
+│   ├── ai_error.log        # AI错误日志
+│   └── database_error.log  # 数据库错误日志
+├── 20260117_193045/        # 2026-01-17 19:30:45启动的会话
+│   └── ... (同样的日志文件)
+└── archive/                   # 归档目录（保留重要日志）
+```
+
+#### 讨论组功能
+
+讨论组功能允许将投票和互动消息发送到频道的讨论组（评论区），避免频道消息过多。
+
+**配置讨论组模式**：
+```bash
+# 设置投票发送到讨论组
+/setchannelpoll channel1 true discussion
+```
+
+**使用条件**：
+- 频道必须绑定了讨论组
+- 机器人必须加入讨论组
+- 机器人需要有发送消息的权限
+
+**工作流程**：
+1. 总结消息发送到频道
+2. 系统监听转发到讨论组的事件
+3. 投票和按钮发送到讨论组，回复转发消息
+4. 讨论组ID会被缓存，减少API调用
+
+**缓存管理**：
+```bash
+# 清除讨论组ID缓存
+/clearcache
+```
+
 ---
 
 ## 🏗️ 技术架构
@@ -370,51 +499,71 @@ log/
 ```
 Sakura-Channel-Summary-Assistant-Pro/
 │
-├── 📄 核心源代码文件
-│   ├── main.py                    # 主程序入口
-│   ├── config.py                  # 配置管理模块
+├── 📄 主程序
+│   └── main.py                    # 主程序入口
+│
+├── 📁 core/                       # 核心模块目录
+│   ├── __init__.py
 │   ├── ai_client.py               # AI客户端模块
-│   ├── telegram_client.py         # Telegram客户端模块
-│   ├── telegram_client_utils.py   # Telegram客户端工具模块
-│   ├── command_handlers.py        # 命令处理模块
+│   ├── config.py                  # 配置管理模块
+│   ├── database.py                # 数据库管理模块
 │   ├── scheduler.py               # 调度器模块
 │   ├── error_handler.py           # 错误处理模块
+│   ├── logger_config.py           # 日志配置模块
 │   ├── prompt_manager.py          # 提示词管理模块
 │   ├── poll_prompt_manager.py     # 投票提示词管理模块
 │   ├── poll_regeneration_handlers.py  # 投票重新生成处理模块
 │   ├── summary_time_manager.py    # 时间管理模块
 │   ├── history_handlers.py        # 历史记录处理模块
-│   ├── database.py                # 数据库管理模块
-│   ├── restart_bot.py             # 机器人重启脚本
-│   └── restart_bot_improved.py    # 改进版重启脚本
+│   ├── config_validators.py       # 配置验证器模块
+│   ├── telegram_client.py         # Telegram客户端模块
+│   ├── telegram_client_utils.py   # Telegram工具函数模块
+│   ├── command_handlers.py        # 命令处理模块（路由）
+│   ├── command_handlers/           # 命令处理子模块
+│   │   ├── __init__.py
+│   │   ├── channel_commands.py    # 频道相关命令
+│   │   ├── summary_commands.py    # 总结相关命令
+│   │   ├── prompt_commands.py     # 提示词相关命令
+│   │   └── system_commands.py     # 系统相关命令
+│   └── telegram/                  # Telegram子模块
+│       ├── __init__.py
+│       ├── message_fetcher.py     # 消息抓取
+│       ├── message_sender.py      # 消息发送
+│       └── poll_sender.py         # 投票发送
+│
+├── 📁 data/                       # 数据目录
+│   ├── config/                    # 配置文件目录
+│   ├── sessions/                  # Telegram会话文件目录
+│   ├── database/                  # 数据库文件目录
+│   ├── data/                      # 运行时数据目录
+│   └── temp/                      # 临时文件目录
+│
+├── 📁 log/                        # 日志目录
+│   ├── 20260117_191530/          # 按时间戳组织的日志会话
+│   └── archive/                   # 日志归档
 │
 ├── 📄 配置文件
 │   ├── .env                       # 环境变量配置（从.env.example复制）
 │   ├── .env.example               # 环境变量示例
-│   ├── config.json                # AI配置文件（运行时生成）
-│   ├── prompt.txt                 # 提示词文件（运行时生成）
-│   ├── poll_prompt.txt            # 投票提示词文件（运行时生成）
-│   └── .last_summary_time.json    # 时间记录文件（运行时生成）
-│
-├── � 会话文件（运行时生成）
-│   ├── bot_session.session        # Telegram主会话
-│   ├── health_check.session       # 健康检查会话
-│   └── *.session-journal          # 会话日志文件
+│   └── config.json                # 频道配置文件（运行时生成）
 │
 ├── 📄 部署与构建文件
 │   ├── Dockerfile                 # Docker镜像构建
 │   ├── docker-compose.yml         # Docker Compose配置
 │   ├── docker-entrypoint.sh       # Docker入口点脚本
-│   ├── requirements.txt           # Python依赖
-│   └── start.bat                  # Windows启动脚本
+│   ├── deploy-docker.sh           # Linux/macOS一键部署脚本
+│   ├── deploy-docker.ps1          # Windows一键部署脚本
+│   ├── start.bat                  # Windows启动脚本
+│   └── requirements.txt           # Python依赖
 │
 ├── 📄 文档文件
 │   ├── README.md                  # 项目说明文档
 │   ├── CHANGELOG.md               # 更新日志
 │   └── LICENSE                    # 许可证文件
 │
-└── 📁 data/                       # 数据目录
-    └── summaries.db               # SQLite数据库文件
+└── 📄 其他文件
+    ├── .gitignore                 # Git忽略文件
+    └── .dockerignore              # Docker忽略文件
 ```
 
 ### 技术栈
@@ -439,12 +588,42 @@ Sakura-Channel-Summary-Assistant-Pro/
 - **command_handlers.py**：命令处理器，处理所有Telegram命令
 - **database.py**：数据库管理，处理数据持久化
 - **error_handler.py**：错误处理，提供重试和恢复机制
+- **logger_config.py**：日志配置，管理日志系统和清理
 
 ---
 
 ## 🐳 Docker部署
 
 ### 一键部署
+
+**Linux/macOS 系统：**
+
+```bash
+# 使用一键部署脚本（推荐）
+chmod +x deploy-docker.sh
+./deploy-docker.sh
+```
+
+部署脚本会自动执行以下步骤：
+1. 检查 Docker 和 Docker Compose 环境
+2. 检查并创建 .env 文件
+3. 创建必要的数据目录
+4. 清理旧容器（如果存在）
+5. 构建并启动新容器
+
+**Windows 系统：**
+
+```powershell
+# 使用一键部署脚本（推荐）
+.\deploy-docker.ps1
+```
+
+如果遇到 PowerShell 执行策略限制，请先运行：
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### 手动部署
 
 ```bash
 # 启动所有服务
@@ -460,6 +639,61 @@ docker-compose logs -f
 docker-compose down
 ```
 
+### 高级配置
+
+#### 资源限制
+
+容器已配置资源限制，可在 `docker-compose.yml` 中调整：
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 512M    # 最大内存512MB
+    reservations:
+      memory: 256M    # 预留内存256MB
+```
+
+#### 日志驱动配置
+
+容器日志采用 JSON 文件驱动，自动轮转：
+
+```yaml
+logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"   # 单个日志文件最大10MB
+    max-file: "3"     # 保留最多3个日志文件
+```
+
+#### 健康检查配置
+
+容器包含健康检查机制：
+
+```yaml
+healthcheck:
+  test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+  interval: 30s      # 每30秒检查一次
+  timeout: 10s       # 超时时间10秒
+  retries: 3         # 失败3次后标记为不健康
+  start_period: 60s  # 启动后60秒开始检查
+```
+
+查看健康状态：
+```bash
+docker inspect --format='{{json .State.Health}}' sakura-summary-bot-pro
+```
+
+#### 网络配置
+
+容器使用独立的桥接网络：
+
+```yaml
+networks:
+  sakura-network:
+    driver: bridge
+```
+
 ### 数据持久化
 
 容器使用本地卷进行数据持久化，所有重要数据都保存在本地文件系统中：
@@ -468,17 +702,18 @@ docker-compose down
 Sakura-Channel-Summary-Assistant-Pro/
 ├── 📄 配置文件（持久化保存）
 │   ├── .env                    # 环境变量配置
-│   ├── config.json             # AI配置文件
-│   ├── prompt.txt              # 提示词文件
-│   └── .last_summary_time.json # 总结时间记录文件
+│   ├── config.json             # 频道配置文件
+│   └── ...                     # 其他配置文件
 │
 ├── 📄 会话文件（持久化保存）
-│   ├── bot_session.session     # Telegram主会话
-│   ├── health_check.session    # 健康检查会话
-│   └── *.session-journal       # 会话日志文件
+│   ├── data/sessions/
+│   │   ├── bot_session.session     # Telegram主会话
+│   │   ├── health_check.session    # 健康检查会话
+│   │   └── *.session-journal       # 会话日志文件
 │
 └── 📄 数据库（持久化保存）
-    └── data/summaries.db      # SQLite数据库文件
+    └── data/database/
+        └── summaries.db           # SQLite数据库文件
 ```
 
 ### 管理命令
@@ -493,9 +728,236 @@ docker-compose restart
 # 更新服务（重新构建镜像）
 docker-compose up -d --build
 
-# 查看健康状态
-docker inspect --format='{{json .State.Health}}' sakura-summary-bot-pro
+# 查看容器资源使用
+docker stats sakura-summary-bot-pro
+
+# 查看容器详细信息
+docker inspect sakura-summary-bot-pro
+
+# 查看容器日志（最近100行）
+docker-compose logs --tail=100
+
+# 查看特定服务的日志
+docker-compose logs -f sakura-summary-bot-pro
 ```
+
+### 常见问题
+
+**Q: 首次运行时提示需要Telegram登录授权？**
+
+A: 这是正常现象。首次运行时，Telethon需要创建会话文件，请按照提示输入手机号和验证码完成登录。
+
+**Q: 容器启动后立即退出？**
+
+A: 检查 `.env` 文件配置是否正确，特别是 `TELEGRAM_API_ID`、`TELEGRAM_API_HASH` 和 `TELEGRAM_BOT_TOKEN`。
+
+**Q: 如何更新到最新版本？**
+
+A:
+```bash
+# 拉取最新代码
+git pull
+
+# 重新构建并启动
+docker-compose up -d --build
+```
+
+---
+
+## 🔍 系统监控与维护
+
+### 健康检查
+
+系统内置健康检查机制，自动监控以下组件：
+
+1. **Telegram连接**：检查Telegram API是否正常
+2. **AI API连接**：检查AI服务是否可用
+3. **数据库连接**：检查SQLite数据库是否正常
+
+健康检查日志会记录在 `health_check.session` 中。
+
+### 错误处理
+
+**重试机制**：
+- 自动重试：网络错误、超时等会自动重试
+- 指数退避：重试间隔按指数增长（2s, 4s, 8s...）
+- 最大重试次数：默认3次
+- 最大延迟：60秒
+
+**优雅关闭**：
+- 捕获 SIGTERM 和 SIGINT 信号
+- 保存当前状态
+- 关闭数据库连接
+- 释放Telegram会话
+
+### 日志管理
+
+**日志级别**：
+- DEBUG：详细的调试信息
+- INFO：一般信息记录
+- WARNING：警告信息
+- ERROR：错误信息
+- CRITICAL：严重错误
+
+**设置日志级别**：
+```bash
+# 通过命令设置
+/setloglevel INFO
+
+# 通过环境变量设置（需要重启）
+LOG_LEVEL=INFO
+```
+
+**查看日志统计**：
+```bash
+# 查看日志大小和会话信息
+# 通过 /cleanlogs preview 命令查看
+```
+
+**清理旧日志**：
+```bash
+# 清理30天前的日志
+/cleanlogs
+
+# 清理指定天数的日志
+/cleanlogs 60
+
+# 通过环境变量配置自动清理
+LOG_RETENTION_DAYS=30
+```
+
+---
+
+## 🛠️ 故障排除
+
+### 常见问题与解决方案
+
+#### 1. Telegram API 连接问题
+
+**症状**：
+- 无法获取频道消息
+- 提示 "FloodWaitError" 或 "ApiIdInvalidError"
+
+**解决方案**：
+```bash
+# 检查 API ID 和 API Hash 是否正确
+# 确保在 my.telegram.org 获取的是正确的值
+
+# 如果遇到 FloodWaitError，等待一段时间后重试
+# 这是 Telegram 的限流机制，正常现象
+
+# 检查网络连接，确保可以访问 Telegram API
+```
+
+#### 2. AI API 调用问题
+
+**症状**：
+- 总结内容为空
+- 提示 AI API 错误
+
+**解决方案**：
+```bash
+# 检查 API Key 是否正确
+# 确认 API Key 是否有足够的配额
+
+# 测试 API 连接
+curl -H "Authorization: Bearer YOUR_API_KEY" https://api.deepseek.com/v1/models
+
+# 检查 BASE_URL 是否正确
+# DeepSeek: https://api.deepseek.com
+# OpenAI: https://api.openai.com/v1
+```
+
+#### 3. 数据库问题
+
+**症状**：
+- 无法保存总结记录
+- 查询历史记录失败
+
+**解决方案**：
+```bash
+# 检查数据库文件权限
+ls -l data/database/summaries.db
+
+# 如果数据库损坏，可以删除重建
+rm data/database/summaries.db
+# 重启机器人，会自动创建新的数据库
+```
+
+#### 4. Docker 部署问题
+
+**症状**：
+- 容器无法启动
+- 容器启动后立即退出
+
+**解决方案**：
+```bash
+# 检查 Docker 是否正在运行
+docker ps
+
+# 查看容器日志
+docker-compose logs
+
+# 检查 .env 文件配置
+cat .env
+
+# 重新构建镜像
+docker-compose down
+docker-compose up -d --build
+```
+
+#### 5. 投票功能问题
+
+**症状**：
+- 投票无法发送
+- 投票格式错误
+
+**解决方案**：
+```bash
+# 检查投票功能是否启用
+/channelpoll
+
+# 检查频道投票配置
+/setchannelpoll channel_name true channel
+
+# 如果是讨论组模式，确保机器人已加入讨论组
+# 并有发送消息的权限
+```
+
+#### 6. 日志问题
+
+**症状**：
+- 日志文件过大
+- 磁盘空间不足
+
+**解决方案**：
+```bash
+# 清理旧日志
+/cleanlogs
+
+# 调整日志保留天数
+# 在 .env 文件中设置
+LOG_RETENTION_DAYS=7
+
+# 手动删除旧日志目录
+rm -rf log/2025*
+```
+
+### 获取帮助
+
+如果以上解决方案无法解决您的问题：
+
+1. **查看详细日志**：
+```bash
+docker-compose logs -f
+```
+
+2. **提交 Issue**：
+   - 访问 [GitHub Issues](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant-Pro/issues)
+   - 提供详细的错误信息和环境配置
+
+3. **联系支持**：
+   - 邮箱：sakura520222@outlook.com
 
 ---
 
@@ -563,7 +1025,7 @@ GPLv3许可证特别适合以下商业模式：
 
 **🌸 Sakura-频道总结助手** · 让频道管理更智能
 
-[快速开始](#-快速开始) · [功能详解](#-功能详解) · [Docker部署](#-docker部署) · [许可证](#-许可证)
+[快速开始](#-快速开始) · [功能详解](#-功能详解) · [Docker部署](#-docker部署) · [故障排除](#-故障排除)
 
 **Copyright © 2026 Sakura-Channel-Summary-Assistant-Pro. All Rights Reserved.**
 
