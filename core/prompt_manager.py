@@ -18,7 +18,7 @@
 # 许可证全文：https://www.gnu.org/licenses/gpl-3.0.html
 
 import logging
-from config import PROMPT_FILE, DEFAULT_PROMPT
+from .config import PROMPT_FILE, DEFAULT_PROMPT
 
 logger = logging.getLogger(__name__)
 

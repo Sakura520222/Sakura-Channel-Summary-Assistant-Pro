@@ -20,14 +20,14 @@
 import os
 import logging
 from dotenv import load_dotenv
-from config_validators import ScheduleValidator, LegacyScheduleValidator
+from .config_validators import ScheduleValidator, LegacyScheduleValidator
 
 # 立即加载 .env 文件中的环境变量（必须在所有配置读取之前）
 load_dotenv()
 
 # 导入日志配置模块（在 load_dotenv() 之后导入，确保能读取到 .env 中的配置）
 try:
-    from logger_config import logger, get_log_level, update_all_loggers_level
+    from .logger_config import logger, get_log_level, update_all_loggers_level
     LOG_SYSTEM_INITIALIZED = True
 except ImportError:
     # 如果logger_config模块导入失败，使用基本配置（向后兼容）
@@ -116,7 +116,8 @@ LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
 
 # 日志配置
 LOG_LEVEL = os.getenv('LOG_LEVEL')
-logger.info(f"日志配置 - LOG_LEVEL={LOG_LEVEL}, LOG_DIR={os.getenv('LOG_DIR', 'log')}, LOG_RETENTION_DAYS={os.getenv('LOG_RETENTION_DAYS', '30')}")
+LOG_DIR = os.getenv('LOG_DIR', 'log')
+logger.info(f"日志配置 - LOG_LEVEL={LOG_LEVEL}, LOG_DIR={LOG_DIR}, LOG_RETENTION_DAYS={os.getenv('LOG_RETENTION_DAYS', '30')}")
 
 
 # 是否将报告发送回源频道的配置，默认为True
@@ -243,12 +244,27 @@ def save_config(config):
     import json
     logger.info(f"开始保存配置到文件: {CONFIG_FILE}")
     try:
+        # 读取现有配置（如果存在）
+        existing_config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                    existing_config = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"配置文件 {CONFIG_FILE} 格式错误，将创建新配置: {e}")
+        
+        # 合并配置：传入的 config 优先级更高
+        merged_config = existing_config.copy()
+        merged_config.update(config)
+        
+        # 写入合并后的配置
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-        logger.info(f"成功保存配置到文件，配置项数量: {len(config)}")
+            json.dump(merged_config, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"成功保存配置到文件，配置项数量: {len(merged_config)}")
         
         # 更新模块变量以保持一致性
-        update_module_variables(config)
+        update_module_variables(merged_config)
         
     except Exception as e:
         logger.error(f"保存配置到文件 {CONFIG_FILE} 时出错: {type(e).__name__}: {e}", exc_info=True)

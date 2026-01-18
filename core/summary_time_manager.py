@@ -60,7 +60,7 @@ def _load_summary_file():
     Returns:
         dict: 总结数据字典，如果失败返回None
     """
-    from config import LAST_SUMMARY_FILE
+    from .config import LAST_SUMMARY_FILE
     
     logger.info(f"开始读取上次总结时间文件: {LAST_SUMMARY_FILE}")
     
@@ -144,7 +144,7 @@ def _load_existing_summary_data():
     Returns:
         dict: 现有数据，如果文件不存在返回空字典
     """
-    from config import LAST_SUMMARY_FILE
+    from .config import LAST_SUMMARY_FILE
     
     if not os.path.exists(LAST_SUMMARY_FILE):
         return {}
@@ -169,7 +169,7 @@ def save_last_summary_time(channel, time_to_save, summary_message_ids=None, poll
         button_message_ids: 按钮消息ID列表(新格式)
         report_message_ids: 发送到源频道的报告消息ID列表(旧格式,兼容参数)
     """
-    from config import LAST_SUMMARY_FILE
+    from .config import LAST_SUMMARY_FILE
 
     logger.info(f"开始保存频道 {channel} 的上次总结时间到文件: {LAST_SUMMARY_FILE}")
     

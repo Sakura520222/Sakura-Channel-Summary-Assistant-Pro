@@ -27,7 +27,7 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # 导入数据库路径配置
-from config import DATABASE_PATH
+from .config import DATABASE_PATH
 
 
 class DatabaseManager:

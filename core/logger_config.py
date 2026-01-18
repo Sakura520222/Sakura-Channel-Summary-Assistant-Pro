@@ -349,7 +349,7 @@ def _find_old_session_dirs(cutoff_date: datetime) -> List[Dict]:
     查找需要清理的旧会话目录
     
     Args:
-        cutoff_date: 截止日期
+        cutoff_date: 截止日期（会删除早于或等于此日期的目录）
     
     Returns:
         list: 旧会话目录列表
@@ -361,8 +361,11 @@ def _find_old_session_dirs(cutoff_date: datetime) -> List[Dict]:
             continue
         
         try:
+            # 获取目录的修改时间
             dir_mtime = datetime.fromtimestamp(os.path.getmtime(item_path))
-            if dir_mtime < cutoff_date:
+            
+            # 使用 <= 而不是 <，这样可以删除早于或等于截止日期的目录
+            if dir_mtime <= cutoff_date:
                 dir_size = _get_dir_size(item_path)
                 session_dirs.append({
                     'path': item_path,

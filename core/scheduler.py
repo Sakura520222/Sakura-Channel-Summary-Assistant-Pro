@@ -21,20 +21,150 @@ import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
-from prompt_manager import load_prompt
-from summary_time_manager import load_last_summary_time, save_last_summary_time
-from ai_client import analyze_with_ai
-from telegram_client import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
+from .config import CHANNELS, SEND_REPORT_TO_SOURCE, logger, LLM_MODEL
+from .prompt_manager import load_prompt
+from .summary_time_manager import load_last_summary_time, save_last_summary_time
+from .ai_client import analyze_with_ai
+from .telegram import fetch_last_week_messages, send_report, get_active_client, extract_date_range_from_summary
+from .database import get_db_manager
 
-async def main_job(channel=None):
-    """定时任务主函数
+logger = logging.getLogger(__name__)
+
+# 创建全局调度器实例
+scheduler = AsyncIOScheduler(timezone='Asia/Shanghai')
+
+async def init_scheduler():
+    """初始化调度器"""
+    global scheduler
+    logger.info("正在初始化调度器...")
+    
+    # 清理旧的投票重新生成数据（超过30天的）
+    try:
+        deleted_count = cleanup_old_regenerations(days=30)
+        if deleted_count > 0:
+            logger.info(f"已清理 {deleted_count} 条过期的投票重新生成数据")
+    except Exception as e:
+        logger.error(f"清理投票重新生成数据失败: {e}")
+    
+    # 获取频道的调度配置
+    for channel in CHANNELS:
+        from .config import get_channel_schedule
+        schedule_config = get_channel_schedule(channel)
+        
+        if not schedule_config:
+            logger.warning(f"频道 {channel} 没有调度配置，将使用默认配置")
+            continue
+        
+        frequency = schedule_config.get('frequency', 'weekly')
+        hour = schedule_config['hour']
+        minute = schedule_config['minute']
+        
+        # 添加定时任务
+        if frequency == 'daily':
+            # 每天模式
+            job = scheduler.add_job(
+                main_job_wrapper,
+                'interval',
+                days=1,
+                start_date=datetime.now().replace(hour=hour, minute=minute, second=0),
+                kwargs={'channel': channel}
+            )
+            logger.info(f"已为频道 {channel} 添加每天定时任务: {hour:02d}:{minute:02d}")
+        
+        elif frequency == 'weekly':
+            # 每周模式
+            days = schedule_config.get('days', [])
+            day_map = {
+                'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3,
+                'fri': 4, 'sat': 5, 'sun': 6
+            }
+            
+            for day in days:
+                if day.lower() in day_map:
+                    job = scheduler.add_job(
+                        main_job_wrapper,
+                        'interval',
+                        weeks=1,
+                        day_of_week=day_map[day.lower()],
+                        start_date=datetime.now(),
+                        kwargs={'channel': channel}
+                    )
+                    logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{day} {hour:02d}:{minute:02d}")
+        
+        # 添加清理任务（每天凌晨3点）
+        scheduler.add_job(
+            cleanup_old_regenerations,
+            'interval',
+            days=1,
+            start_date=datetime.now().replace(hour=3, minute=0, second=0)
+        )
+        logger.info("已添加投票重新生成数据清理任务（每天凌晨3点）")
+    
+    logger.info(f"调度器初始化完成，共添加了 {len(scheduler.get_jobs())} 个定时任务")
+    scheduler.start()
+    logger.info("调度器已启动")
+
+
+async def main_job_wrapper(channel):
+    """包装主任务函数，用于调度器调用"""
+    try:
+        # 调用主任务
+        from .telegram import get_active_client
+        client = get_active_client()
+        
+        result = await main_job(channel=channel, client=client)
+        
+        if result['success']:
+            logger.info(f"定时任务执行成功: {result['details']}")
+        else:
+            logger.error(f"定时任务执行失败: {result.get('error', '未知错误')}")
+            
+    except Exception as e:
+        logger.error(f"定时任务执行异常: {type(e).__name__}: {e}", exc_info=True)
+
+
+async def stop_scheduler():
+    """停止调度器"""
+    global scheduler
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("调度器已停止")
+    else:
+        logger.warning("调度器未在运行")
+
+
+def pause_scheduler():
+    """暂停调度器"""
+    from .config import get_scheduler_instance
+    scheduler = get_scheduler_instance()
+    if scheduler and scheduler.running:
+        scheduler.pause()
+        logger.info("调度器已暂停")
+    else:
+        logger.warning("调度器未在运行")
+
+
+def resume_scheduler():
+    """恢复调度器"""
+    from .config import get_scheduler_instance
+    scheduler = get_scheduler_instance()
+    if scheduler and scheduler.running:
+        scheduler.resume()
+        logger.info("调度器已恢复")
+    else:
+        logger.warning("调度器未在运行")
+
+
+async def main_job(channel=None, client=None, manual=False):
+    """主任务函数：执行总结
     
     Args:
         channel: 可选，指定要处理的频道。如果为None，则处理所有频道
+        client: 可选，Telegram客户端实例。如果为None，则使用全局客户端
+        manual: 是否手动触发的任务，用于日志记录
     
     Returns:
-        dict: 包含任务执行结果的字典，格式为:
+        dict: 包含任务执行结果的字典
             {
                 "success": bool,  # 是否成功
                 "channel": str,   # 处理的频道
@@ -48,7 +178,7 @@ async def main_job(channel=None):
     start_time = datetime.now()
     
     if channel:
-        logger.info(f"定时任务启动（单频道模式）: {start_time}，频道: {channel}")
+        logger.info(f"手动任务启动（单频道模式）: {start_time}, 频道: {channel}")
         channels_to_process = [channel]
     else:
         logger.info(f"定时任务启动（全频道模式）: {start_time}")
@@ -56,10 +186,10 @@ async def main_job(channel=None):
     
     try:
         results = []
+        
         # 按频道分别处理
         for channel in channels_to_process:
             channel_start_time = datetime.now()
-            logger.info(f"开始处理频道: {channel}")
             
             # 读取该频道的上次总结时间和报告消息ID
             channel_summary_data = load_last_summary_time(channel, include_report_ids=True)
@@ -105,53 +235,35 @@ async def main_job(channel=None):
             
             # 获取该频道的消息
             messages = messages_by_channel.get(channel, [])
-            
-            # 检查频道是否存在（如果频道不存在，messages_by_channel可能不包含该频道）
-            if channel not in messages_by_channel:
-                # 频道不存在或无法访问
-                channel_end_time = datetime.now()
-                channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
-                
-                result = {
-                    "success": False,
-                    "channel": channel,
-                    "message_count": 0,
-                    "summary_length": 0,
-                    "processing_time": channel_processing_time,
-                    "error": f"频道 {channel} 不存在或无法访问",
-                    "details": f"频道 {channel} 不存在或无法访问，处理时间 {channel_processing_time:.2f}秒"
-                }
-                results.append(result)
-                logger.error(f"频道 {channel} 不存在或无法访问")
-                continue
             if messages:
-                logger.info(f"开始处理频道 {channel} 的消息，共 {len(messages)} 条消息")
+                logger.info(f"开始处理频道 {channel} 的消息")
                 current_prompt = load_prompt()
                 summary = analyze_with_ai(messages, current_prompt)
-
-                # 获取活动的客户端实例和频道的实际名称用于报告标题
-                active_client = get_active_client()
+                
+                # 获取频道实际名称
                 try:
-                    channel_entity = await active_client.get_entity(channel)
+                    channel_entity = await client.get_entity(channel)
                     channel_name = channel_entity.title
                     logger.info(f"获取到频道实际名称: {channel_name}")
                 except Exception as e:
                     logger.warning(f"获取频道实体失败，使用链接后缀作为回退: {e}")
-                    # 如果获取失败，使用链接后缀作为回退
                     channel_name = channel.split('/')[-1]
-
+                
+                # 获取活动的客户端实例
+                active_client = get_active_client()
+                
                 # 获取频道的调度配置，用于生成报告标题
-                from config import get_channel_schedule
+                from .config import get_channel_schedule
                 schedule_config = get_channel_schedule(channel)
                 frequency = schedule_config.get('frequency', 'weekly')
-
+                
                 # 计算起始日期和终止日期
                 end_date = datetime.now(timezone.utc)
                 if channel_last_summary_time:
                     start_date = channel_last_summary_time
                 else:
                     start_date = end_date - timedelta(days=7)
-
+                
                 # 格式化日期为 月.日 格式
                 start_date_str = f"{start_date.month}.{start_date.day}"
                 end_date_str = f"{end_date.month}.{end_date.day}"
@@ -164,68 +276,61 @@ async def main_job(channel=None):
 
                 # 生成报告文本
                 report_text = f"**{report_title}**\n\n{summary}"
+                
                 # 发送报告给管理员，并根据配置决定是否发送回源频道
-                report_result = None
-
+                # 跳过向管理员发送报告，避免重复发送
+                sent_report_ids = []
                 if SEND_REPORT_TO_SOURCE:
-                    report_result = await send_report(report_text, channel, client=active_client, message_count=len(messages))
+                    sent_report_ids = await send_report(report_text, channel, active_client, skip_admins=True, message_count=len(messages))
                 else:
-                    report_result = await send_report(report_text, client=active_client, message_count=len(messages))
-
+                    await send_report(report_text, None, active_client, skip_admins=True, message_count=len(messages))
+                
                 # 保存该频道的本次总结时间和所有相关消息ID
-                if report_result:
-                    summary_ids = report_result.get("summary_message_ids", [])
-                    poll_id = report_result.get("poll_message_id")
-                    button_id = report_result.get("button_message_id")
+                if sent_report_ids:
+                    summary_ids = sent_report_ids.get("summary_message_ids", [])
+                    poll_id = sent_report_ids.get("poll_message_id")
+                    button_id = sent_report_ids.get("button_message_id")
 
                     # 转换单个ID为列表格式
                     poll_ids = [poll_id] if poll_id else []
                     button_ids = [button_id] if button_id else []
 
-                    # ✅ 新增：保存到数据库
-                    try:
-                        from database import get_db_manager
+                    # 保存到数据库
+                    db = get_db_manager()
+                    
+                    # 提取时间范围
+                    start_time_db, end_time_db = extract_date_range_from_summary(report_text)
+                    
+                    summary_id = db.save_summary(
+                        channel_id=channel,
+                        channel_name=channel_name,
+                        summary_text=report_text,
+                        message_count=len(messages),
+                        start_time=start_time_db,
+                        end_time=end_time_db,
+                        summary_message_ids=summary_ids,
+                        poll_message_id=poll_id,
+                        button_message_id=button_id,
+                        ai_model=LLM_MODEL,
+                        summary_type=frequency  # 'daily' 或 'weekly'
+                    )
 
-                        # 提取时间范围
-                        start_time_db, end_time_db = extract_date_range_from_summary(report_text)
+                    if summary_id:
+                        logger.info(f"定时任务总结已保存到数据库，记录ID: {summary_id}")
+                    else:
+                        logger.warning("保存到数据库失败，但不影响定时任务执行")
 
-                        # 保存到数据库
-                        db = get_db_manager()
-                        summary_id = db.save_summary(
-                            channel_id=channel,
-                            channel_name=channel_name,
-                            summary_text=report_text,
-                            message_count=len(messages),
-                            start_time=start_time_db,
-                            end_time=end_time_db,
-                            summary_message_ids=summary_ids,
-                            poll_message_id=poll_id,
-                            button_message_id=button_id,
-                            ai_model=LLM_MODEL,
-                            summary_type=frequency  # 'daily' 或 'weekly'
-                        )
-
-                        if summary_id:
-                            logger.info(f"定时任务总结已保存到数据库，记录ID: {summary_id}")
-                        else:
-                            logger.warning("保存到数据库失败，但不影响定时任务执行")
-
-                    except Exception as e:
-                        logger.error(f"保存定时任务总结到数据库时出错: {type(e).__name__}: {e}", exc_info=True)
-                        # 数据库保存失败不影响定时任务，只记录日志
-
+                    # 更新总结时间记录（不包含报告消息ID，避免存储过多数据）
                     save_last_summary_time(
                         channel,
-                        datetime.now(timezone.utc),
-                        summary_message_ids=summary_ids,
-                        poll_message_ids=poll_ids,
-                        button_message_ids=button_ids
+                        datetime.now(timezone.utc)
                     )
-                
+                else:
+                    save_last_summary_time(channel, datetime.now(timezone.utc))
+                    
                 channel_end_time = datetime.now()
                 channel_processing_time = (channel_end_time - channel_start_time).total_seconds()
                 
-                # 构建结果信息
                 result = {
                     "success": True,
                     "channel": channel,
@@ -237,7 +342,6 @@ async def main_job(channel=None):
                 }
                 results.append(result)
                 
-                logger.info(f"频道 {channel} 处理完成: {result['details']}")
             else:
                 logger.info(f"频道 {channel} 没有新消息需要总结")
                 channel_end_time = datetime.now()
@@ -258,7 +362,7 @@ async def main_job(channel=None):
         processing_time = (end_time - start_time).total_seconds()
         
         if channel:
-            logger.info(f"定时任务完成（单频道模式）: {end_time}，频道: {channel}，处理时间: {processing_time:.2f}秒")
+            logger.info(f"手动任务完成（单频道模式）: {end_time}，频道: {channel}，处理时间: {processing_time:.2f}秒")
         else:
             logger.info(f"定时任务完成（全频道模式）: {end_time}，总处理时间: {processing_time:.2f}秒")
         
@@ -266,14 +370,17 @@ async def main_job(channel=None):
         if len(results) == 1:
             return results[0]
         else:
+            total_message_count = sum(r["message_count"] for r in results)
+            total_summary_length = sum(r["summary_length"] for r in results)
+            
             return {
                 "success": True,
                 "channel": "all" if not channel else channel,
-                "message_count": sum(r["message_count"] for r in results),
-                "summary_length": sum(r["summary_length"] for r in results),
+                "message_count": total_message_count,
+                "summary_length": total_summary_length,
                 "processing_time": processing_time,
                 "error": None,
-                "details": f"成功处理 {len(results)} 个频道，共 {sum(r['message_count'] for r in results)} 条消息，总处理时间 {processing_time:.2f}秒"
+                "details": f"成功处理 {len(results)} 个频道，共 {total_message_count} 条消息，生成 {total_summary_length} 字符的总结，处理时间 {processing_time:.2f}秒"
             }
             
     except Exception as e:
@@ -286,7 +393,6 @@ async def main_job(channel=None):
         else:
             logger.error(f"定时任务执行失败（全频道模式）: {error_msg}，开始时间: {start_time}，结束时间: {end_time}，处理时间: {processing_time:.2f}秒", exc_info=True)
         
-        # 返回错误结果
         return {
             "success": False,
             "channel": channel if channel else "all",
@@ -298,13 +404,21 @@ async def main_job(channel=None):
         }
 
 
-async def cleanup_old_poll_regenerations():
-    """定期清理超过30天的投票重新生成数据"""
-    from config import cleanup_old_regenerations
-
+def cleanup_old_regenerations(days=30):
+    """清理超过指定天数的投票重新生成数据
+    
+    Args:
+        days: 保留的天数，默认30天
+    
+    Returns:
+        int: 删除的记录数量
+    """
+    from .config import cleanup_old_regenerations
+    
     try:
-        deleted_count = cleanup_old_regenerations(days=30)
-        if deleted_count > 0:
-            logger.info(f"已清理 {deleted_count} 条过期的投票重新生成数据")
+        deleted_count = cleanup_old_regenerations(days)
+        logger.info(f"清理了 {deleted_count} 条过期的投票重新生成数据")
+        return deleted_count
     except Exception as e:
-        logger.error(f"清理投票重新生成数据失败: {e}")
+        logger.error(f"清理投票重新生成数据时出错: {type(e).__name__}: {e}", exc_info=True)
+        return 0

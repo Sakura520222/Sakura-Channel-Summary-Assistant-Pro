@@ -19,9 +19,9 @@
 
 import logging
 from openai import OpenAI
-from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
-from error_handler import retry_with_backoff, record_error
-from poll_prompt_manager import load_poll_prompt
+from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from .error_handler import retry_with_backoff, record_error
+from .poll_prompt_manager import load_poll_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ def _truncate_unicode(text, max_length):
     
     Args:
         text: 要截断的文本
-        max_length: 最大长度
+        max_length: 最大长度（字符数）
     
     Returns:
         str: 截断后的文本
@@ -131,11 +131,9 @@ def _truncate_unicode(text, max_length):
     if len(text) <= max_length:
         return text
     
-    truncated = text[:max_length]
-    # 回退直到找到完整的多字节字符边界
-    while truncated and (truncated[-1].encode('utf-8') & 0xC0) == 0x80:
-        truncated = truncated[:-1]
-    return truncated + '...'
+    # Python 字符串切片是基于字符而非字节，直接切片不会破坏字符
+    # 为截断符号预留1个字符位置
+    return text[:max_length-1] + '…'
 
 
 def _validate_and_fix_poll_data(poll_data):

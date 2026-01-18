@@ -18,7 +18,7 @@
 # 许可证全文：https://www.gnu.org/licenses/gpl-3.0.html
 
 import logging
-from config import POLL_PROMPT_FILE, DEFAULT_POLL_PROMPT
+from .config import POLL_PROMPT_FILE, DEFAULT_POLL_PROMPT
 
 logger = logging.getLogger(__name__)
 

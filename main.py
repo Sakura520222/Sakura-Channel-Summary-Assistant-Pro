@@ -30,15 +30,15 @@ from telethon.tl.functions.channels import LeaveChannelRequest
 from telethon.tl.types import BotCommand, BotCommandScopeDefault
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import (
+from core.config import (
     API_ID, API_HASH, BOT_TOKEN, CHANNELS, LLM_API_KEY,
     RESTART_FLAG_FILE, SHUTDOWN_FLAG_FILE, SESSION_PATH,
     logger, get_channel_schedule, build_cron_trigger, ADMIN_LIST,
     BLACKLIST_ENABLED, BLACKLIST_THRESHOLD_COUNT, BLACKLIST_THRESHOLD_HOURS
 )
-from database import get_db_manager
-from scheduler import main_job
-from command_handlers import (
+from core.database import get_db_manager
+from core.scheduler import main_job
+from core.command_handlers import (
     handle_manual_summary, handle_show_prompt, handle_set_prompt,
     handle_prompt_input, handle_show_poll_prompt, handle_set_poll_prompt,
     handle_poll_prompt_input, handle_show_log_level, handle_set_log_level,
@@ -46,17 +46,19 @@ from command_handlers import (
     handle_delete_channel, handle_clear_summary_time, handle_set_send_to_source,
     handle_show_channel_schedule, handle_set_channel_schedule, handle_delete_channel_schedule,
     handle_changelog, handle_shutdown, handle_pause, handle_resume,
-    handle_show_channel_poll, handle_set_channel_poll, handle_delete_channel_poll,
     handle_start, handle_help, handle_clear_cache, handle_clean_logs,
-    handle_blacklist, handle_add_blacklist, handle_remove_blacklist,
-    handle_clear_blacklist, handle_confirm_clear_blacklist, handle_blacklist_stats
+    handle_blacklist, handle_channel_poll, handle_set_channel_poll,
+    handle_delete_channel_poll
 )
-from history_handlers import handle_history, handle_export, handle_stats
-from poll_regeneration_handlers import handle_poll_regeneration_callback
-from error_handler import initialize_error_handling, get_health_checker, get_error_stats
+from core.history_handlers import handle_history, handle_export, handle_stats
+from core.poll_regeneration_handlers import handle_poll_regeneration_callback
+from core.error_handler import initialize_error_handling, get_health_checker, get_error_stats
 
 # 版本信息
 __version__ = "1.0.0"
+
+# 全局重启标志（使用可变对象以便跨模块修改）
+restart_requested = {'value': False}
 
 async def send_startup_message(client):
     """向所有管理员发送启动消息"""
@@ -155,7 +157,10 @@ async def send_startup_message(client):
     except Exception as e:
         logger.error(f"发送启动消息时出错: {type(e).__name__}: {e}", exc_info=True)
 
-async def main():
+async def run_bot_instance():
+    """运行一次机器人实例"""
+    # 不再需要 global 声明，因为使用的是可变字典
+    
     logger.info(f"开始初始化机器人服务 v{__version__}...")
     
     scheduler = None
@@ -208,9 +213,9 @@ async def main():
         logger.info(f"定时任务配置完成：共 {len(CHANNELS)} 个频道")
 
         # 添加定期清理任务
-        from scheduler import cleanup_old_poll_regenerations
+        from core.config import cleanup_old_regenerations
         scheduler.add_job(
-            cleanup_old_poll_regenerations,
+            cleanup_old_regenerations,
             'cron',
             hour=3,
             minute=0,
@@ -223,7 +228,7 @@ async def main():
         client = TelegramClient(SESSION_PATH, int(API_ID), API_HASH)
         
         # 设置活动的客户端实例，供其他模块使用
-        from telegram_client import set_active_client
+        from core.telegram import set_active_client
         set_active_client(client)
         
         # 添加命令处理，支持中英文命令
@@ -249,16 +254,17 @@ async def main():
         client.add_event_handler(handle_clear_summary_time, NewMessage(pattern='/clearsummarytime|/clear_summary_time|/清除总结时间'))
         client.add_event_handler(handle_set_send_to_source, NewMessage(pattern='/setsendtosource|/set_send_to_source|/设置报告发送回源频道'))
 
+        # 5. 投票配置命令 - 频道投票设置
+        client.add_event_handler(handle_channel_poll, NewMessage(pattern='/channelpoll|/channel_poll|/频道投票配置'))
+        client.add_event_handler(handle_set_channel_poll, NewMessage(pattern='/setchannelpoll|/set_channel_poll|/设置频道投票配置'))
+        client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
+
         # 5. 提示词配置命令 - AI提示词管理
         client.add_event_handler(handle_show_prompt, NewMessage(pattern='/showprompt|/show_prompt|/查看提示词'))
         client.add_event_handler(handle_set_prompt, NewMessage(pattern='/setprompt|/set_prompt|/设置提示词'))
         client.add_event_handler(handle_show_poll_prompt, NewMessage(pattern='/showpollprompt|/show_poll_prompt|/查看投票提示词'))
         client.add_event_handler(handle_set_poll_prompt, NewMessage(pattern='/setpollprompt|/set_poll_prompt|/设置投票提示词'))
 
-        # 6. 投票配置命令 - 互动投票设置
-        client.add_event_handler(handle_show_channel_poll, NewMessage(pattern='/channelpoll|/channel_poll|/查看频道投票配置'))
-        client.add_event_handler(handle_set_channel_poll, NewMessage(pattern='/setchannelpoll|/set_channel_poll|/设置频道投票配置'))
-        client.add_event_handler(handle_delete_channel_poll, NewMessage(pattern='/deletechannelpoll|/delete_channel_poll|/删除频道投票配置'))
 
         # 7. 历史记录命令 - 查看历史总结
         client.add_event_handler(handle_history, NewMessage(pattern='/history|/历史'))
@@ -277,15 +283,6 @@ async def main():
         client.add_event_handler(handle_clear_cache, NewMessage(pattern='/clearcache|/clear_cache|/清除缓存'))
         client.add_event_handler(handle_clean_logs, NewMessage(pattern='/cleanlogs|/clean_logs|/清理日志'))
 
-        # 10. 黑名单管理命令 (如果启用)
-        if BLACKLIST_ENABLED:
-            client.add_event_handler(handle_blacklist, NewMessage(pattern='/blacklist|/黑名单'))
-            client.add_event_handler(handle_add_blacklist, NewMessage(pattern='/addblacklist|/add_blacklist|/添加黑名单'))
-            client.add_event_handler(handle_remove_blacklist, NewMessage(pattern='/removeblacklist|/remove_blacklist|/移除黑名单'))
-            client.add_event_handler(handle_clear_blacklist, NewMessage(pattern='/clearblacklist|/clear_blacklist|/清空黑名单'))
-            client.add_event_handler(handle_confirm_clear_blacklist, NewMessage(pattern='/confirmclear'))
-            client.add_event_handler(handle_blacklist_stats, NewMessage(pattern='/blackliststats|/blacklist_stats|/黑名单统计'))
-            logger.info("黑名单管理命令处理器已注册")
         # 只处理非命令消息作为提示词输入
         client.add_event_handler(handle_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
         client.add_event_handler(handle_poll_prompt_input, NewMessage(func=lambda e: not e.text.startswith('/')))
@@ -672,17 +669,6 @@ async def main():
             BotCommand(command="cleanlogs", description="清理旧日志文件")
         ]
         
-        # 添加黑名单命令（如果启用）
-        if BLACKLIST_ENABLED:
-            blacklist_commands = [
-                BotCommand(command="blacklist", description="查看黑名单列表"),
-                BotCommand(command="addblacklist", description="添加用户到黑名单"),
-                BotCommand(command="removeblacklist", description="从黑名单移除用户"),
-                BotCommand(command="clearblacklist", description="清空黑名单"),
-                BotCommand(command="blackliststats", description="查看黑名单统计信息")
-            ]
-            commands.extend(blacklist_commands)
-            logger.info("黑名单命令已注册到命令列表")
         
         await client(SetBotCommandsRequest(
             scope=BotCommandScopeDefault(),
@@ -700,7 +686,7 @@ async def main():
         logger.info("调度器已启动")
         
         # 存储调度器实例到config模块，供其他模块访问
-        from config import set_scheduler_instance
+        from core.config import set_scheduler_instance
         set_scheduler_instance(scheduler)
         logger.info("调度器实例已存储到config模块")
         
@@ -712,6 +698,9 @@ async def main():
         # 检查是否是重启后的首次运行
         if os.path.exists(RESTART_FLAG_FILE):
             try:
+                # 等待一段时间确保网络堆栈已完全就绪
+                await asyncio.sleep(1)
+                
                 with open(RESTART_FLAG_FILE, 'r') as f:
                     content = f.read().strip()
                 
@@ -730,47 +719,6 @@ async def main():
                 logger.info("重启标记文件已删除")
             except Exception as e:
                 logger.error(f"处理重启标记时出错: {type(e).__name__}: {e}", exc_info=True)
-        
-        # 检查关机标记文件
-        if os.path.exists(SHUTDOWN_FLAG_FILE):
-            try:
-                with open(SHUTDOWN_FLAG_FILE, 'r') as f:
-                    shutdown_user = f.read().strip()
-                
-                logger.info(f"检测到关机标记，操作者: {shutdown_user}")
-                
-                # 向所有管理员发送关机通知
-                for admin_id in ADMIN_LIST:
-                    try:
-                        await client.send_message(
-                            admin_id,
-                            "🤖 机器人已执行关机命令，正在停止运行...",
-                            link_preview=False
-                        )
-                        logger.info(f"已向管理员 {admin_id} 发送关机通知")
-                    except Exception as e:
-                        logger.error(f"向管理员 {admin_id} 发送关机通知失败: {e}")
-
-                # 删除关机标记文件
-                os.remove(SHUTDOWN_FLAG_FILE)
-                logger.info("关机标记文件已删除")
-                
-                # 等待消息发送完成
-                time.sleep(2)
-                
-                # 执行关机
-                logger.info("执行关机操作...")
-                sys.exit(0)
-                
-            except Exception as e:
-                logger.error(f"处理关机标记时出错: {type(e).__name__}: {e}", exc_info=True)
-                # 即使出错也尝试删除关机标记文件，避免遗留
-                try:
-                    if os.path.exists(SHUTDOWN_FLAG_FILE):
-                        os.remove(SHUTDOWN_FLAG_FILE)
-                        logger.info("出错后已清理关机标记文件")
-                except Exception as cleanup_error:
-                    logger.error(f"清理关机标记文件时出错: {cleanup_error}")
 
         # 保持客户端运行
         await client.run_until_disconnected()
@@ -802,12 +750,20 @@ async def main():
             logger.info("客户端连接已断开，无需操作")
         
         logger.info("资源清理完成")
+        
+        # 清除活动的客户端实例
+        from core.telegram import set_active_client
+        set_active_client(None)
+        
+        # 清除调度器实例
+        from core.config import set_scheduler_instance
+        set_scheduler_instance(None)
 
-if __name__ == "__main__":
-    logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ====")
-    
-    # 执行完整的配置验证
-    from config import validate_config
+
+async def main():
+    """主函数"""
+    # 执行配置验证
+    from core.config import validate_config
     is_valid, errors, warnings = validate_config()
     
     if not is_valid:
@@ -815,9 +771,20 @@ if __name__ == "__main__":
         print("配置验证失败，请检查以下错误：")
         for error in errors:
             print(f"  ❌ {error}")
-        sys.exit(1)
+        return
     
     logger.info("配置验证通过，准备启动主程序")
+    
+    # 运行机器人实例
+    try:
+        await run_bot_instance()
+    except KeyboardInterrupt:
+        logger.info("收到键盘中断，退出程序")
+    except Exception as e:
+        logger.critical(f"主函数执行失败: {type(e).__name__}: {e}", exc_info=True)
+
+if __name__ == "__main__":
+    logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ====")
     
     # 启动主函数
     try:

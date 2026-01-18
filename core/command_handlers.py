@@ -24,18 +24,18 @@ import os
 from datetime import datetime, timezone, timedelta
 from telethon.events import NewMessage
 
-from config import (
+from .config import (
     CHANNELS, ADMIN_LIST, SEND_REPORT_TO_SOURCE,
     RESTART_FLAG_FILE, load_config, save_config, logger,
     get_channel_schedule, set_channel_schedule, set_channel_schedule_v2,
     delete_channel_schedule, validate_schedule,
     get_channel_poll_config, set_channel_poll_config, delete_channel_poll_config
 )
-from prompt_manager import load_prompt, save_prompt
-from poll_prompt_manager import load_poll_prompt, save_poll_prompt
-from summary_time_manager import load_last_summary_time, save_last_summary_time
-from ai_client import analyze_with_ai, client_llm
-from telegram_client import fetch_last_week_messages, send_long_message, send_report
+from .prompt_manager import load_prompt, save_prompt
+from .poll_prompt_manager import load_poll_prompt, save_poll_prompt
+from .summary_time_manager import load_last_summary_time, save_last_summary_time
+from .ai_client import analyze_with_ai, client_llm
+from .telegram import fetch_last_week_messages, send_long_message, send_report
 
 # 全局变量，用于跟踪正在设置提示词的用户
 setting_prompt_users = set()
@@ -385,7 +385,7 @@ async def handle_set_log_level(event):
         level_str = level_str.strip().upper()
         
         # 检查日志级别是否有效
-        from config import LOG_LEVEL_MAP
+        from .config import LOG_LEVEL_MAP
         if level_str not in LOG_LEVEL_MAP:
             await event.reply(f"无效的日志级别: {level_str}\n\n可用日志级别：DEBUG, INFO, WARNING, ERROR, CRITICAL")
             return
@@ -642,7 +642,7 @@ async def handle_set_send_to_source(event):
             return
         
         # 转换为布尔值
-        from config import SEND_REPORT_TO_SOURCE
+        from .config import SEND_REPORT_TO_SOURCE
         SEND_REPORT_TO_SOURCE = value in ['true', '1', 'yes']
         
         # 更新配置文件
@@ -998,12 +998,12 @@ async def handle_shutdown(event):
     # 发送关机确认消息
     await event.reply("正在关闭机器人...")
     
-    # 设置关机状态
-    from config import set_bot_state, BOT_STATE_SHUTTING_DOWN
+        # 设置关机状态
+    from .config import set_bot_state, BOT_STATE_SHUTTING_DOWN
     set_bot_state(BOT_STATE_SHUTTING_DOWN)
     
     # 停止调度器
-    from config import get_scheduler_instance
+    from .config import get_scheduler_instance
     scheduler = get_scheduler_instance()
     if scheduler:
         scheduler.shutdown(wait=False)
@@ -1038,7 +1038,7 @@ async def handle_pause(event):
         return
     
     # 检查当前状态
-    from config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
+    from .config import get_bot_state, set_bot_state, BOT_STATE_RUNNING, BOT_STATE_PAUSED
     current_state = get_bot_state()
     
     if current_state == BOT_STATE_PAUSED:
