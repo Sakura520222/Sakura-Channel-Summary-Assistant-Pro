@@ -48,7 +48,7 @@ from core.command_handlers import (
     handle_changelog, handle_shutdown, handle_pause, handle_resume,
     handle_start, handle_help, handle_clear_cache, handle_clean_logs,
     handle_blacklist, handle_channel_poll, handle_set_channel_poll,
-    handle_delete_channel_poll
+    handle_delete_channel_poll, handle_reload
 )
 from core.history_handlers import handle_history, handle_export, handle_stats
 from core.poll_regeneration_handlers import handle_poll_regeneration_callback
@@ -113,6 +113,7 @@ async def send_startup_message(client):
 **🔧 系统维护**
 /showloglevel - 查看当前日志级别
 /setloglevel - 设置日志级别
+/reload - 重载所有配置（无需重启）
 /clearcache - 清除讨论组ID缓存
 /cleanlogs - 清理旧日志文件
 
@@ -280,6 +281,7 @@ async def run_bot_instance():
         # 9. 日志与调试命令 - 系统维护
         client.add_event_handler(handle_show_log_level, NewMessage(pattern='/showloglevel|/show_log_level|/查看日志级别'))
         client.add_event_handler(handle_set_log_level, NewMessage(pattern='/setloglevel|/set_log_level|/设置日志级别'))
+        client.add_event_handler(handle_reload, NewMessage(pattern='/reload'))
         client.add_event_handler(handle_clear_cache, NewMessage(pattern='/clearcache|/clear_cache|/清除缓存'))
         client.add_event_handler(handle_clean_logs, NewMessage(pattern='/cleanlogs|/clean_logs|/清理日志'))
 
@@ -665,6 +667,7 @@ async def run_bot_instance():
             # 9. 日志与调试命令 - 系统维护
             BotCommand(command="showloglevel", description="查看当前日志级别"),
             BotCommand(command="setloglevel", description="设置日志级别"),
+            BotCommand(command="reload", description="重载所有配置（无需重启）"),
             BotCommand(command="clearcache", description="清除讨论组ID缓存"),
             BotCommand(command="cleanlogs", description="清理旧日志文件")
         ]
@@ -694,6 +697,31 @@ async def run_bot_instance():
         logger.info("开始向管理员发送启动消息...")
         await send_startup_message(client)
         logger.info("启动消息发送完成")
+        
+        # 初始化并启动配置热重载功能
+        logger.info("初始化配置热重载功能...")
+        from core.config_watcher import init_global_watcher, start_global_watcher
+        from core.config_reloader import init_global_reloader
+        
+        # 初始化配置重载管理器
+        config_reloader = init_global_reloader()
+        logger.info("配置重载管理器初始化完成")
+        
+        # 初始化配置文件监控器
+        config_watcher = init_global_watcher(
+            reload_callback=lambda file_path: config_reloader.reload_by_file(file_path),
+            debounce_seconds=2.0
+        )
+        
+        # 启动配置文件监控
+        if config_watcher:
+            watcher_started = start_global_watcher()
+            if watcher_started:
+                logger.info("✅ 配置热重载功能已启动（自动监控启用）")
+            else:
+                logger.info("⚠️ 配置热重载功能已禁用（watchdog 未安装），请使用 /reload 命令手动重载")
+        else:
+            logger.warning("配置文件监控器初始化失败，自动监控功能不可用")
         
         # 检查是否是重启后的首次运行
         if os.path.exists(RESTART_FLAG_FILE):
@@ -750,6 +778,11 @@ async def run_bot_instance():
             logger.info("客户端连接已断开，无需操作")
         
         logger.info("资源清理完成")
+        
+        # 停止配置文件监控器
+        from core.config_watcher import stop_global_watcher
+        stop_global_watcher()
+        logger.info("配置文件监控器已停止")
         
         # 清除活动的客户端实例
         from core.telegram import set_active_client

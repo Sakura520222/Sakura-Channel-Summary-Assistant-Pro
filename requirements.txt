@@ -2,3 +2,4 @@ telethon
 openai
 apscheduler
 python-dotenv
+watchdog>=3.0.0

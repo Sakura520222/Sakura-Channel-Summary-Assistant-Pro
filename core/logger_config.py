@@ -194,6 +194,26 @@ root_logger.addHandler(console_handler)
 logger = setup_logger(__name__, None, get_log_level(LOG_LEVEL))
 
 
+def get_current_log_level() -> str:
+    """获取当前日志级别
+    
+    Returns:
+        str: 当前日志级别字符串 ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
+    """
+    # 获取根 logger 的级别
+    root_logger = logging.getLogger()
+    level_num = root_logger.getEffectiveLevel()
+    
+    # 将数字级别转换为字符串
+    level_str = None
+    for name, num in LOG_LEVEL_MAP.items():
+        if num == level_num:
+            level_str = name
+            break
+    
+    return level_str or 'INFO'
+
+
 def update_all_loggers_level(level_str: str):
     """动态更新所有已创建的 logger 及其处理器的级别
     

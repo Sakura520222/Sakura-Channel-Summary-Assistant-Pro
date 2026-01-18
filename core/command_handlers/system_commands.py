@@ -407,6 +407,11 @@ async def handle_help(event):
 **系统管理命令：**
 /showloglevel - 显示当前日志级别
 /setloglevel <级别> - 设置日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
+/reload [type] - 手动重载配置（无需重启）
+  • /reload - 重载所有配置
+  • /reload env - 只重载环境变量
+  • /reload config - 只重载配置文件
+  • /reload prompts - 只重载提示词
 /restart - 重启机器人
 /changelog - 查看更新日志
 /shutdown - 关闭机器人
@@ -576,3 +581,161 @@ async def handle_blacklist(event):
     
     else:
         await event.reply("未知操作。使用 /blacklist 查看帮助")
+
+
+async def handle_reload(event):
+    """处理/reload命令，手动重载配置"""
+    sender_id = event.sender_id
+    command = event.text
+    logger.info(f"收到命令: {command}，发送者: {sender_id}")
+    
+    # 检查发送者是否为管理员
+    if sender_id not in ADMIN_LIST and ADMIN_LIST != ['me']:
+        logger.warning(f"发送者 {sender_id} 没有权限执行命令 {command}")
+        await event.reply("您没有权限执行此命令")
+        return
+    
+    parts = command.split()
+    reload_type = parts[1].lower() if len(parts) > 1 else 'all'
+    
+    from ..config_watcher import get_global_watcher
+    from ..config_reloader import (
+        reload_all_configs, reload_env, reload_config_json,
+        reload_prompt, reload_poll_prompt
+    )
+    from ..config import CHANNELS, SUMMARY_SCHEDULES, CHANNEL_POLL_SETTINGS, SEND_REPORT_TO_SOURCE, ENABLE_POLL
+    
+    # 检查自动监控状态
+    watcher = get_global_watcher()
+    watcher_status = "✅ 自动监控已启用" if watcher and watcher.is_enabled() else "❌ 自动监控已禁用"
+    
+    try:
+        if reload_type == 'all':
+            # 重载所有配置
+            await event.reply("⏳ 正在重载所有配置...")
+            success, message, details = reload_all_configs()
+            
+            # 构建回复消息
+            reply_msg = f"{message}\n\n"
+            reply_msg += f"📊 **当前配置状态**\n\n"
+            
+            # 添加配置状态
+            if 'env' in details:
+                env_info = details['env']
+                reply_msg += f"**环境变量**: {env_info['status']}\n"
+                if env_info['status'] == 'success' and 'info' in env_info:
+                    log_level = env_info['info'].get('log_level', '未设置')
+                    reply_msg += f"  日志级别: {log_level}\n"
+            
+            if 'config' in details:
+                config_info = details['config']
+                reply_msg += f"**配置文件**: {config_info['status']}\n"
+                if config_info['status'] == 'success' and 'info' in config_info:
+                    info = config_info['info']
+                    reply_msg += f"  频道列表: {info['channels']} 个\n"
+                    reply_msg += f"  总结时间配置: {info['summary_schedules']} 个频道\n"
+                    reply_msg += f"  投票配置: {info['poll_settings']} 个频道\n"
+                    reply_msg += f"  发送到源频道: {info['send_report_to_source']}\n"
+                    reply_msg += f"  启用投票: {info['enable_poll']}\n"
+                    reply_msg += f"  调度器已重启: {info['scheduler_restarted']}\n"
+            
+            if 'prompt' in details:
+                prompt_info = details['prompt']
+                reply_msg += f"**总结提示词**: {prompt_info['status']}\n"
+                if prompt_info['status'] == 'success' and 'info' in prompt_info:
+                    reply_msg += f"  长度: {prompt_info['info']['length']} 字符\n"
+            
+            if 'poll_prompt' in details:
+                poll_prompt_info = details['poll_prompt']
+                reply_msg += f"**投票提示词**: {poll_prompt_info['status']}\n"
+                if poll_prompt_info['status'] == 'success' and 'info' in poll_prompt_info:
+                    reply_msg += f"  长度: {poll_prompt_info['info']['length']} 字符\n"
+            
+            reply_msg += f"\n{watcher_status}"
+            
+            logger.info(f"执行命令 {command} 成功")
+            await event.reply(reply_msg)
+        
+        elif reload_type == 'env':
+            # 只重载环境变量
+            await event.reply("⏳ 正在重载环境变量...")
+            result = reload_env()
+            
+            if result.success:
+                reply_msg = f"✅ 环境变量重载成功\n\n"
+                if result.details and 'log_level' in result.details:
+                    reply_msg += f"日志级别: {result.details['log_level']}\n"
+                reply_msg += f"\n{watcher_status}"
+                logger.info(f"执行命令 {command} 成功")
+                await event.reply(reply_msg)
+            else:
+                logger.error(f"执行命令 {command} 失败: {result.message}")
+                await event.reply(f"❌ 环境变量重载失败: {result.message}")
+        
+        elif reload_type == 'config':
+            # 只重载配置文件
+            await event.reply("⏳ 正在重载配置文件...")
+            result = reload_config_json()
+            
+            if result.success:
+                reply_msg = f"✅ 配置文件重载成功\n\n"
+                reply_msg += f"📊 **当前配置状态**\n\n"
+                reply_msg += f"频道列表: {len(CHANNELS)} 个\n"
+                reply_msg += f"总结时间配置: {len(SUMMARY_SCHEDULES)} 个频道\n"
+                reply_msg += f"投票配置: {len(CHANNEL_POLL_SETTINGS)} 个频道\n"
+                reply_msg += f"发送到源频道: {SEND_REPORT_TO_SOURCE}\n"
+                reply_msg += f"启用投票: {ENABLE_POLL}\n"
+                reply_msg += f"调度器已重启: {result.details.get('scheduler_restarted', False)}\n"
+                reply_msg += f"\n{watcher_status}"
+                logger.info(f"执行命令 {command} 成功")
+                await event.reply(reply_msg)
+            else:
+                logger.error(f"执行命令 {command} 失败: {result.message}")
+                await event.reply(f"❌ 配置文件重载失败: {result.message}")
+        
+        elif reload_type == 'prompts' or reload_type == 'prompt':
+            # 只重载提示词
+            await event.reply("⏳ 正在重载提示词...")
+            
+            prompt_result = reload_prompt()
+            poll_prompt_result = reload_poll_prompt()
+            
+            if prompt_result.success and poll_prompt_result.success:
+                reply_msg = f"✅ 提示词重载成功\n\n"
+                reply_msg += f"总结提示词: {prompt_result.details['length']} 字符\n"
+                reply_msg += f"投票提示词: {poll_prompt_result.details['length']} 字符\n"
+                reply_msg += f"\n{watcher_status}"
+                logger.info(f"执行命令 {command} 成功")
+                await event.reply(reply_msg)
+            else:
+                errors = []
+                if not prompt_result.success:
+                    errors.append(f"总结提示词: {prompt_result.message}")
+                if not poll_prompt_result.success:
+                    errors.append(f"投票提示词: {poll_prompt_result.message}")
+                
+                error_msg = "\n".join(errors)
+                logger.error(f"执行命令 {command} 失败: {error_msg}")
+                await event.reply(f"❌ 提示词重载失败:\n{error_msg}")
+        
+        else:
+            # 显示帮助
+            help_msg = """
+**配置重载命令**
+
+/reload - 重载所有配置
+/reload env - 只重载环境变量
+/reload config - 只重载配置文件
+/reload prompts - 只重载提示词
+
+说明：
+• 环境变量重载会动态更新日志级别
+• 配置文件重载会重启调度器（如果频道或时间配置有变化）
+• 提示词重载会立即生效（下次生成总结时使用）
+            """
+            logger.info(f"执行命令 {command} 成功（显示帮助）")
+            await event.reply(help_msg)
+    
+    except Exception as e:
+        logger.error(f"重载配置时出错: {type(e).__name__}: {e}", exc_info=True)
+        await event.reply(f"❌ 重载配置时出错: {e}")

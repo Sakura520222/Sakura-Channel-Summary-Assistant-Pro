@@ -21,7 +21,8 @@ from .system_commands import (
     handle_show_log_level, handle_set_log_level,
     handle_restart, handle_changelog, handle_shutdown,
     handle_pause, handle_resume, handle_clean_logs,
-    handle_help, handle_start, handle_clear_cache, handle_blacklist
+    handle_help, handle_start, handle_clear_cache, handle_blacklist,
+    handle_reload
 )
 from .channel_commands import (
     handle_show_channels, handle_add_channel, handle_delete_channel,
@@ -42,7 +43,7 @@ __all__ = [
     'handle_restart', 'handle_changelog', 'handle_shutdown',
     'handle_pause', 'handle_resume', 'handle_clean_logs',
     'handle_help', 'handle_start', 'handle_clear_cache',
-    'handle_blacklist',
+    'handle_blacklist', 'handle_reload',
     'handle_show_channels', 'handle_add_channel', 'handle_delete_channel',
     'handle_show_channel_schedule', 'handle_set_channel_schedule',
     'handle_delete_channel_schedule', 'handle_clear_summary_time',

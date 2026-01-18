@@ -155,6 +155,134 @@ def resume_scheduler():
         logger.warning("调度器未在运行")
 
 
+async def graceful_restart_scheduler():
+    """优雅重启调度器
+    
+    等待当前运行中的任务完成后再重启调度器。
+    用于配置热重载场景，确保不中断正在进行的总结任务。
+    """
+    import asyncio
+    from .config import get_scheduler_instance, CHANNELS, set_scheduler_instance, get_channel_schedule
+    
+    global scheduler
+    scheduler_instance = get_scheduler_instance()
+    
+    if scheduler_instance is None:
+        logger.warning("调度器实例不存在，无法重启")
+        return
+    
+    if not scheduler_instance.running:
+        logger.info("调度器未在运行，无需重启")
+        return
+    
+    logger.info("开始优雅重启调度器...")
+    
+    try:
+        # 1. 暂停调度器（不再接受新任务）
+        scheduler_instance.pause()
+        logger.info("调度器已暂停")
+        
+        # 2. 获取正在运行的任务
+        running_jobs = [job for job in scheduler_instance.get_jobs() if job.next_run_time]
+        logger.info(f"当前有 {len(running_jobs)} 个定时任务")
+        
+        # 3. 等待运行中的任务完成（最多30秒）
+        if running_jobs:
+            logger.info("等待当前运行中的任务完成...")
+            try:
+                # APScheduler 的 pause() 会等待当前执行的任务完成
+                # 我们只需要给一点时间确保任务完成
+                await asyncio.sleep(2.0)
+                logger.info("等待完成")
+            except asyncio.TimeoutError:
+                logger.warning("等待任务完成超时，强制继续")
+        
+        # 4. 停止调度器
+        logger.info("停止调度器...")
+        scheduler_instance.shutdown(wait=False)
+        logger.info("调度器已停止")
+        
+        # 5. 创建新的调度器实例
+        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        new_scheduler = AsyncIOScheduler(timezone='Asia/Shanghai')
+        
+        # 6. 为每个频道重新添加定时任务
+        logger.info(f"重新加载 {len(CHANNELS)} 个频道的定时任务...")
+        
+        for channel in CHANNELS:
+            schedule_config = get_channel_schedule(channel)
+            
+            if not schedule_config:
+                logger.warning(f"频道 {channel} 没有调度配置，跳过")
+                continue
+            
+            frequency = schedule_config.get('frequency', 'weekly')
+            hour = schedule_config['hour']
+            minute = schedule_config['minute']
+            
+            # 添加定时任务
+            if frequency == 'daily':
+                # 每天模式
+                new_scheduler.add_job(
+                    main_job_wrapper,
+                    'interval',
+                    days=1,
+                    start_date=datetime.now().replace(hour=hour, minute=minute, second=0),
+                    kwargs={'channel': channel}
+                )
+                logger.info(f"已为频道 {channel} 添加每天定时任务: {hour:02d}:{minute:02d}")
+            
+            elif frequency == 'weekly':
+                # 每周模式
+                days = schedule_config.get('days', [])
+                day_map = {
+                    'mon': 0, 'tue': 1, 'wed': 2, 'thu': 3,
+                    'fri': 4, 'sat': 5, 'sun': 6
+                }
+                
+                for day in days:
+                    if day.lower() in day_map:
+                        new_scheduler.add_job(
+                            main_job_wrapper,
+                            'interval',
+                            weeks=1,
+                            day_of_week=day_map[day.lower()],
+                            start_date=datetime.now(),
+                            kwargs={'channel': channel}
+                        )
+                        logger.info(f"已为频道 {channel} 添加每周定时任务: 每周{day} {hour:02d}:{minute:02d}")
+        
+        # 7. 添加清理任务（每天凌晨3点）
+        new_scheduler.add_job(
+            cleanup_old_regenerations,
+            'interval',
+            days=1,
+            start_date=datetime.now().replace(hour=3, minute=0, second=0)
+        )
+        logger.info("已添加投票重新生成数据清理任务（每天凌晨3点）")
+        
+        # 8. 更新全局调度器实例
+        global scheduler
+        scheduler = new_scheduler
+        set_scheduler_instance(new_scheduler)
+        
+        # 9. 启动新调度器
+        new_scheduler.start()
+        logger.info(f"新调度器已启动，共添加了 {len(new_scheduler.get_jobs())} 个定时任务")
+        
+        logger.info("调度器优雅重启完成")
+        
+    except Exception as e:
+        logger.error(f"优雅重启调度器失败: {type(e).__name__}: {e}", exc_info=True)
+        # 尝试恢复原调度器
+        try:
+            if scheduler_instance and not scheduler_instance.running:
+                scheduler_instance.start()
+                logger.info("已恢复原调度器")
+        except Exception as e2:
+            logger.error(f"恢复原调度器失败: {type(e2).__name__}: {e2}")
+
+
 async def main_job(channel=None, client=None, manual=False):
     """主任务函数：执行总结
     

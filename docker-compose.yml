@@ -13,6 +13,9 @@ services:
       - ./data:/app/data
       # 持久化日志目录
       - ./log:/app/log
+      # 挂载 .env 文件以支持热重载（可选）
+      # 注意：如果使用 .env 文件热重载，请取消下面的注释
+      # - ./.env:/app/.env:ro
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

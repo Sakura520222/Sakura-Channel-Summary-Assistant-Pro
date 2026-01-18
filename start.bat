@@ -2,6 +2,21 @@
 chcp 65001 >nul
 title Sakura 频道总结助手
 
+:: 检查依赖（静默）
+python -c "import telethon" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo ========================================
+    echo 发现缺少依赖，正在自动安装...
+    echo ========================================
+    echo.
+    pip install -r requirements.txt
+    echo.
+    echo ========================================
+    echo 依赖安装完成
+    echo ========================================
+)
+
 :loop
 echo.
 echo ========================================
