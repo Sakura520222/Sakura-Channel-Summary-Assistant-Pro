@@ -1362,7 +1362,7 @@ async def handle_start(event):
 /addchannel - 添加监控频道
 /setchannelschedule - 设置自动总结时间
 
-**历史记录** (新功能)
+**历史记录** 
 /history - 查看历史总结
 /export - 导出历史记录
 /stats - 查看统计数据
@@ -1434,29 +1434,15 @@ async def handle_help(event):
 
 **🤖 基础命令**
 /start - 查看欢迎消息和基本介绍
-/help - 查看此完整命令列表
-/summary - 立即生成本周频道消息汇总
+/help - 查看此完整命令列表和使用说明
 /changelog - 查看项目更新日志
 
-**⚙️ 提示词管理**
-/showprompt - 查看当前使用的提示词
-/setprompt - 设置自定义提示词
-/showpollprompt - 查看当前投票提示词
-/setpollprompt - 设置自定义投票提示词
+**🚀 核心功能**
+/summary - 立即生成频道消息汇总
 
-**📊 日志管理**
-/showloglevel - 查看当前日志级别
-/setloglevel - 设置日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
-
-**🔄 机器人控制**
-/restart - 重启机器人
-/shutdown - 彻底停止机器人
-/pause - 暂停所有定时任务
-/resume - 恢复所有定时任务
-
-**📺 频道管理**
+**📊 频道管理**
 /showchannels - 查看当前监控的频道列表
-/addchannel - 添加新频道到监控列表
+/addchannel - 添加频道到监控列表
 • 示例：/addchannel https://t.me/examplechannel
 /deletechannel - 从监控列表中删除频道
 • 示例：/deletechannel https://t.me/examplechannel
@@ -1464,15 +1450,17 @@ async def handle_help(event):
 **⏰ 时间配置**
 /showchannelschedule - 查看频道自动总结时间配置
 /setchannelschedule - 设置频道自动总结时间
-• 每天：/setchannelschedule 频道 daily 小时 分钟
-• 每周：/setchannelschedule 频道 weekly 星期,星期 小时 分钟
+• 每天模式：/setchannelschedule 频道 daily 小时 分钟
+• 每周模式：/setchannelschedule 频道 weekly 星期,星期 小时 分钟
 /deletechannelschedule - 删除频道自动总结时间配置
-
-**🗑️ 数据管理**
 /clearsummarytime - 清除上次总结时间记录
-
-**📤 报告设置**
 /setsendtosource - 设置是否将报告发送回源频道
+
+**💬 提示词管理**
+/showprompt - 查看当前使用的提示词
+/setprompt - 设置自定义总结提示词
+/showpollprompt - 查看当前投票提示词
+/setpollprompt - 设置自定义投票提示词
 
 **🗳️ 投票配置**
 /channelpoll - 查看频道投票配置
@@ -1480,45 +1468,57 @@ async def handle_help(event):
 • 格式：/setchannelpoll 频道 true/false channel/discussion
 /deletechannelpoll - 删除频道投票配置
 
-**💾 缓存管理**
+**📝 历史记录** 
+/history - 查看历史总结记录
+• /history - 查看所有频道最近10条
+• /history channel1 - 查看指定频道
+• /history channel1 30 - 查看最近30天
+/export - 导出历史记录为文件
+• /export - 导出所有记录为JSON
+• /export channel1 csv - 导出为CSV
+• /export channel1 md - 导出为md
+/stats - 查看频道统计数据
+• /stats - 查看所有频道统计
+• /stats channel1 - 查看指定频道统计
+
+**⚙️ 系统控制**
+/pause - 暂停所有定时任务
+/resume - 恢复所有定时任务
+/restart - 重启机器人服务
+/shutdown - 彻底停止机器人
+
+**🔧 系统维护**
+/showloglevel - 查看当前日志级别
+/setloglevel - 设置日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
 /clearcache - 清除讨论组ID缓存
 • /clearcache - 清除所有缓存
 • /clearcache 频道URL - 清除指定频道缓存
-
-**📋 日志管理**
 /cleanlogs - 清理旧日志文件
 • /cleanlogs - 清理30天前的日志
-• /cleanlogs 60 - 清理60天前的日志
+• /cleanlogs 60 - 清理60天前的日志"""
 
-**🚫 黑名单管理** (新功能)
+        # 检查黑名单功能是否启用
+        from config import BLACKLIST_ENABLED
+        if BLACKLIST_ENABLED:
+            help_message += """
+
+**🚫 黑名单管理** (已启用)
 /blacklist - 查看黑名单列表
 /addblacklist - 添加用户到黑名单
 • 格式：/addblacklist <用户ID> [原因]
 /removeblacklist - 从黑名单移除用户
 • 格式：/removeblacklist <用户ID>
 /clearblacklist - 清空黑名单
-/blackliststats - 查看黑名单统计信息
+/blackliststats - 查看黑名单统计信息"""
 
-**📜 历史记录** (新功能)
-/history - 查看历史总结
-• /history - 查看所有频道最近10条
-• /history channel1 - 查看指定频道
-• /history channel1 30 - 查看最近30天
-
-/export - 导出历史记录
-• /export - 导出所有记录为JSON
-• /export channel1 csv - 导出为CSV
-• /export channel1 md - 导出为md
-
-/stats - 查看统计数据
-• /stats - 查看所有频道统计
-• /stats channel1 - 查看指定频道统计
+        help_message += """
 
 ---
 💡 **提示**
-• 大多数命令支持中英文别名
+• 大多数命令支持中英文别名（如 /summary 和 /立即总结）
 • 配置类命令需要管理员权限
-• 使用 /start 查看快速入门指南"""
+• 使用 /start 查看快速入门指南
+• 查看更多详细信息请访问[项目仓库](https://github.com/Sakura520222/Sakura-Channel-Summary-Assistant-Pro)"""
 
         await event.reply(help_message, link_preview=False)
         logger.info(f"已向用户 {sender_id} 发送完整帮助信息")
