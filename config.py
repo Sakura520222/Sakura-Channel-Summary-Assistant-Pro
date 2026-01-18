@@ -22,7 +22,10 @@ import logging
 from dotenv import load_dotenv
 from config_validators import ScheduleValidator, LegacyScheduleValidator
 
-# 导入日志配置模块
+# 立即加载 .env 文件中的环境变量（必须在所有配置读取之前）
+load_dotenv()
+
+# 导入日志配置模块（在 load_dotenv() 之后导入，确保能读取到 .env 中的配置）
 try:
     from logger_config import logger, get_log_level, update_all_loggers_level
     LOG_SYSTEM_INITIALIZED = True
@@ -97,19 +100,23 @@ DEFAULT_POLL_PROMPT = """根据以下内容生成一个有趣的单选投票。
 {summary_text}
 """
 
-# 加载 .env 文件中的变量
-load_dotenv()
+# 从环境变量中读取配置（.env 文件已在文件开头加载）
 logger.info("已加载 .env 文件中的环境变量")
-
-# 从环境变量中读取配置
 logger.info("开始从环境变量加载配置...")
+
+# Telegram 配置
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
 # AI 配置 - 从环境变量获取默认值
 LLM_API_KEY = os.getenv('LLM_API_KEY', os.getenv('DEEPSEEK_API_KEY'))
 LLM_BASE_URL = os.getenv('LLM_BASE_URL', 'https://api.deepseek.com')
 LLM_MODEL = os.getenv('LLM_MODEL', 'deepseek-chat')
+
+# 日志配置
+LOG_LEVEL = os.getenv('LOG_LEVEL')
+logger.info(f"日志配置 - LOG_LEVEL={LOG_LEVEL}, LOG_DIR={os.getenv('LOG_DIR', 'log')}, LOG_RETENTION_DAYS={os.getenv('LOG_RETENTION_DAYS', '30')}")
 
 
 # 是否将报告发送回源频道的配置，默认为True
@@ -126,7 +133,7 @@ LOG_LEVEL_FROM_ENV = os.getenv('LOG_LEVEL')
 logger.debug(f"从环境变量读取的日志级别: {LOG_LEVEL_FROM_ENV}")
 
 logger.debug(f"从环境变量加载的配置: API_ID={'***' if API_ID else '未设置'}, API_HASH={'***' if API_HASH else '未设置'}, BOT_TOKEN={'***' if BOT_TOKEN else '未设置'}")
-logger.debug(f"AI配置 - 环境变量默认值: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}")
+logger.debug(f"AI配置 - 环境变量默认值: Base URL={LLM_BASE_URL}, Model={LLM_MODEL}, API_KEY={'***' if LLM_API_KEY else '未设置'}")
 
 # 管理员 ID 列表，从环境变量读取后转为整数列表
 REPORT_ADMIN_IDS = os.getenv('REPORT_ADMIN_IDS', '')
@@ -156,6 +163,59 @@ logger.info(f"黑名单检测阈值: {BLACKLIST_THRESHOLD_COUNT} 次")
 # 黑名单检测时间窗口（小时）
 BLACKLIST_THRESHOLD_HOURS = int(os.getenv('BLACKLIST_THRESHOLD_HOURS', '1'))
 logger.info(f"黑名单检测时间窗口: {BLACKLIST_THRESHOLD_HOURS} 小时")
+
+# ==================== 配置验证 ====================
+
+def validate_config():
+    """验证所有必需的配置项是否已正确设置
+    
+    Returns:
+        tuple: (是否有效, 错误消息列表)
+    """
+    errors = []
+    warnings = []
+    
+    # 验证 Telegram 配置
+    if not API_ID:
+        errors.append("TELEGRAM_API_ID 未设置")
+    elif not API_ID.isdigit():
+        errors.append("TELEGRAM_API_ID 必须是数字")
+    
+    if not API_HASH:
+        errors.append("TELEGRAM_API_HASH 未设置")
+    
+    if not BOT_TOKEN:
+        errors.append("TELEGRAM_BOT_TOKEN 未设置")
+    
+    # 验证 AI 配置
+    if not LLM_API_KEY:
+        errors.append("LLM_API_KEY 或 DEEPSEEK_API_KEY 未设置")
+    
+    # 验证管理员配置
+    if not ADMIN_LIST:
+        warnings.append("未配置管理员ID，将默认发送给机器人所有者")
+    
+    # 验证黑名单配置
+    if BLACKLIST_ENABLED:
+        if BLACKLIST_THRESHOLD_COUNT < 1:
+            errors.append("BLACKLIST_THRESHOLD_COUNT 必须大于0")
+        if BLACKLIST_THRESHOLD_HOURS < 1:
+            errors.append("BLACKLIST_THRESHOLD_HOURS 必须大于0")
+    
+    # 记录验证结果
+    if errors:
+        logger.error(f"配置验证失败，发现 {len(errors)} 个错误:")
+        for error in errors:
+            logger.error(f"  - {error}")
+    else:
+        logger.info("所有必需配置项验证通过")
+    
+    if warnings:
+        logger.warning(f"配置验证发现 {len(warnings)} 个警告:")
+        for warning in warnings:
+            logger.warning(f"  - {warning}")
+    
+    return (len(errors) == 0, errors, warnings)
 
 # 读取配置文件
 def load_config():

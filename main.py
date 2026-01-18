@@ -732,28 +732,24 @@ async def main():
 if __name__ == "__main__":
     logger.info(f"===== Sakura频道总结助手 v{__version__} 启动 ====")
     
-    # 检查必要变量是否存在
-    required_vars = [API_ID, API_HASH, BOT_TOKEN, LLM_API_KEY]
-    missing_vars = []
-    if not API_ID:
-        missing_vars.append("TELEGRAM_API_ID")
-    if not API_HASH:
-        missing_vars.append("TELEGRAM_API_HASH")
-    if not BOT_TOKEN:
-        missing_vars.append("TELEGRAM_BOT_TOKEN")
-    if not LLM_API_KEY:
-        missing_vars.append("LLM_API_KEY 或 DEEPSEEK_API_KEY")
+    # 执行完整的配置验证
+    from config import validate_config
+    is_valid, errors, warnings = validate_config()
     
-    if missing_vars:
-        logger.error(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing_vars)}")
-        print(f"错误: 请确保 .env 文件中配置了所有必要的 API 凭证。缺少: {', '.join(missing_vars)}")
-    else:
-        logger.info("所有必要的 API 凭证已配置完成")
-        # 启动主函数
-        try:
-            logger.info("开始启动主函数...")
-            asyncio.run(main())
-        except KeyboardInterrupt:
-            logger.info("机器人服务已通过键盘中断停止")
-        except Exception as e:
-            logger.critical(f"主函数执行失败: {type(e).__name__}: {e}", exc_info=True)
+    if not is_valid:
+        logger.error("配置验证失败，程序无法启动")
+        print("配置验证失败，请检查以下错误：")
+        for error in errors:
+            print(f"  ❌ {error}")
+        sys.exit(1)
+    
+    logger.info("配置验证通过，准备启动主程序")
+    
+    # 启动主函数
+    try:
+        logger.info("开始启动主函数...")
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("机器人服务已通过键盘中断停止")
+    except Exception as e:
+        logger.critical(f"主函数执行失败: {type(e).__name__}: {e}", exc_info=True)
