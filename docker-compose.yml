@@ -1,18 +1,18 @@
 services:
-  sakura-summary-bot:
+  sakura-summary-bot-pro:
     build: .
-    container_name: sakura-summary-bot
+    image: sakura-summary-bot-pro
+    container_name: sakura-summary-bot-pro
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
     env_file:
       - .env
     volumes:
-      # 持久化数据目录
+      # 持久化整个 data 目录（包含所有子目录）
       - ./data:/app/data
-      # 持久化会话文件
-      - ./bot_session.session:/app/bot_session.session
-      - ./session_name.session:/app/session_name.session
+      # 持久化日志目录
+      - ./log:/app/log
     # 健康检查
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]

@@ -31,18 +31,18 @@ COPY docker-entrypoint.sh .
 # 设置启动脚本权限
 RUN chmod +x docker-entrypoint.sh
 
-# 创建非root用户
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-USER appuser
-
-# 创建必要的目录和文件
-RUN mkdir -p /app/data && \
-    touch /app/data/config.json /app/data/prompt.txt /app/data/.last_summary_time.json
+# 创建数据目录结构
+RUN mkdir -p /app/data/config \
+    /app/data/sessions \
+    /app/data/database \
+    /app/data/data \
+    /app/data/temp \
+    /app/log
 
 # 设置数据卷
-VOLUME ["/app/data"]
+VOLUME ["/app/data", "/app/log"]
 
-# 设置入口点
+# 设置入口点（以 root 用户运行）
 ENTRYPOINT ["./docker-entrypoint.sh"]
 
 # 默认命令

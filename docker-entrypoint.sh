@@ -34,42 +34,34 @@ fi
 echo "环境变量检查完成"
 
 # 创建数据目录和文件
-echo "初始化数据目录..."
-mkdir -p /app/data
+echo "初始化数据目录结构..."
 
-# 检查并创建必要的文件
-if [ ! -f /app/data/config.json ]; then
-    echo "创建默认 config.json 文件"
-    echo '{}' > /app/data/config.json
-fi
+# 创建所有必要的目录
+mkdir -p /app/data/config \
+         /app/data/sessions \
+         /app/data/database \
+         /app/data/data \
+         /app/data/temp \
+         /app/log
 
-if [ ! -f /app/data/prompt.txt ]; then
-    echo "创建默认 prompt.txt 文件"
-    echo "请总结以下 Telegram 消息，提取核心要点并列出重要消息的链接：" > /app/data/prompt.txt
-fi
-
-if [ ! -f /app/data/.last_summary_time.json ]; then
-    echo "创建默认 .last_summary_time.json 文件"
-    echo '{}' > /app/data/.last_summary_time.json
-fi
-
-# 创建符号链接到数据目录
-echo "创建配置文件符号链接..."
-ln -sf /app/data/config.json /app/config.json
-ln -sf /app/data/prompt.txt /app/prompt.txt
-ln -sf /app/data/.last_summary_time.json /app/.last_summary_time.json
+echo "数据目录结构创建完成"
 
 # 检查会话文件
-if [ ! -f /app/bot_session.session ]; then
-    echo "注意: 未找到会话文件 bot_session.session"
+SESSION_FILE="/app/data/sessions/bot_session"
+if [ ! -f "$SESSION_FILE" ]; then
+    echo "注意: 未找到会话文件 $SESSION_FILE"
     echo "首次运行需要Telegram登录授权"
     echo "请按照提示完成登录流程"
 fi
 
-# 设置文件权限
-echo "设置文件权限..."
-chown -R appuser:appuser /app/data /app/bot_session.session 2>/dev/null || true
-
+echo "========================================"
+echo "数据目录结构:"
+echo "  /app/data/config/      - 配置文件"
+echo "  /app/data/sessions/    - Telegram会话文件"
+echo "  /app/data/database/   - SQLite数据库"
+echo "  /app/data/data/       - 运行时数据"
+echo "  /app/data/temp/       - 临时文件"
+echo "  /app/log/             - 日志文件"
 echo "========================================"
 echo "启动参数: $@"
 echo "========================================"

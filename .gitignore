@@ -36,25 +36,32 @@ env/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Environment
 .env
+.env.local
+
+# Telegram Session Files
 *.session
 *.session-journal
+*.session-wal
+*.session-shm
 
-# Data directory contents
+# Data directory contents (keep .gitkeep files)
 data/sessions/*
-data/config/*
-data/temp/*
-data/data/*
 !data/sessions/.gitkeep
+data/config/*
 !data/config/.gitkeep
+data/temp/*
 !data/temp/.gitkeep
+data/data/*
 !data/data/.gitkeep
+data/database/*
+!data/database/.gitkeep
 
 # Keep database but ignore journal files
-data/database/*.db-journal
-data/database/*.db-shm
-data/database/*.db-wal
+*.db-journal
+*.db-shm
+*.db-wal
 
 # Old files (root directory - these will be migrated)
 prompt.txt
@@ -76,4 +83,5 @@ summaries_export_*
 *.log
 log/
 
-data/
+# Docker
+.dockerignore

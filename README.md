@@ -485,7 +485,7 @@ Sakura-Channel-Summary-Assistant-Pro/
 
 ```bash
 # 进入容器
-docker-compose exec sakura-summary-bot bash
+docker-compose exec sakura-summary-bot-pro bash
 
 # 重启服务
 docker-compose restart
@@ -494,7 +494,7 @@ docker-compose restart
 docker-compose up -d --build
 
 # 查看健康状态
-docker inspect --format='{{json .State.Health}}' sakura-summary-bot
+docker inspect --format='{{json .State.Health}}' sakura-summary-bot-pro
 ```
 
 ---
